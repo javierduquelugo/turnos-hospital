@@ -176,7 +176,40 @@ export interface DatosEmpleadoPortal {
           </div>
         </div>
       } @else {
-        <!-- Bloque 1: Tarjetas de Resumen Personal y Mi Banco de Horas -->
+        <!-- CINTA DE RESUMEN COMPACTO MÓVIL (<= 768px): SUSTITUYE AL BANNER Y KPI-GRID EN CELULAR -->
+        <div class="portal-mobile-strip">
+          <div class="mobile-strip-chips">
+            <span class="mobile-strip-chip chip-service" [title]="portal.servicioBase?.nombre || 'Servicio'">
+              🏥 {{ portal.servicioBase?.nombre || 'Servicio' }}
+            </span>
+            <span class="mobile-strip-chip chip-hours" [title]="construirTooltipMetaPortal()">
+              ⏰ {{ portal.horasTrabajadas }}h / {{ portal.horasContratadasEfectivas ?? portal.horasContratadasNominales ?? portal.empleado.horasContratoMes }}h
+            </span>
+            <span
+              class="mobile-strip-chip chip-banco"
+              [class.banco-pos]="portal.nuevoSaldoBanco > 0"
+              [class.banco-neg]="portal.nuevoSaldoBanco < 0"
+              [title]="'Saldo anterior: ' + formatearSigno(portal.empleado.saldoBancoAnterior) + 'h • En este mes: ' + formatearSigno(portal.diferenciaMes) + 'h'">
+              🏦 {{ formatearSigno(portal.nuevoSaldoBanco) }}h
+            </span>
+          </div>
+          @if (esAdminTh || esCoordinador) {
+            <div class="mobile-strip-supervisor">
+              <select
+                id="portal-emp-select-mobile"
+                class="mobile-strip-select"
+                [ngModel]="empleadoPortalId"
+                (ngModelChange)="cambiarEmpleadoPortal.emit($event)"
+                aria-label="Seleccionar colaborador">
+                @for (e of empleados; track e.id) {
+                  <option [value]="e.id">{{ e.nombre }}</option>
+                }
+              </select>
+            </div>
+          }
+        </div>
+
+        <!-- Bloque 1: Tarjetas de Resumen Personal y Mi Banco de Horas (Solo Desktop) -->
         <div class="kpi-grid">
           <div class="kpi-card">
             <div class="kpi-label">Servicio y Cargo</div>

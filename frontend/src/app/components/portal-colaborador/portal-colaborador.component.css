@@ -150,6 +150,11 @@
   color: #94a3b8;
 }
 
+/* CINTA DE RESUMEN COMPACTO MÓVIL (OCULTA POR DEFECTO EN DESKTOP) */
+.portal-mobile-strip {
+  display: none;
+}
+
 .kpi-value-srv {
   font-size: 20px !important;
 }
@@ -1036,15 +1041,102 @@
    -------------------------------------------------------------------------- */
 @media (max-width: 768px) {
   .nomina-container {
-    padding: 12px;
-    gap: 14px;
+    padding: 10px;
+    gap: 10px;
   }
 
+  /* Ocultar banner gigante y KPIs apilados en móvil para dar prioridad al calendario */
   .nomina-banner {
-    padding: 14px;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 12px;
+    display: none !important;
+  }
+
+  .kpi-grid {
+    display: none !important;
+  }
+
+  /* Cinta compacta de 1 sola fila con métricas esenciales en móvil */
+  .portal-mobile-strip {
+    display: flex !important;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 12px;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+    flex-wrap: wrap;
+  }
+
+  .mobile-strip-chips {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .mobile-strip-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    color: #334155;
+    line-height: 1.2;
+  }
+
+  .mobile-strip-chip.chip-service {
+    font-weight: 700;
+    color: #4a2096;
+    background: #ede9fe;
+    border-color: #ddd6fe;
+    max-width: 140px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mobile-strip-chip.chip-hours {
+    color: #0f172a;
+    font-weight: 600;
+  }
+
+  .mobile-strip-chip.chip-banco {
+    font-weight: 600;
+  }
+
+  .mobile-strip-chip.chip-banco.banco-pos {
+    color: #059669;
+    background: #ecfdf5;
+    border-color: #a7f3d0;
+    font-weight: 700;
+  }
+
+  .mobile-strip-chip.chip-banco.banco-neg {
+    color: #dc2626;
+    background: #fef2f2;
+    border-color: #fecaca;
+    font-weight: 700;
+  }
+
+  .mobile-strip-supervisor {
+    display: flex;
+    align-items: center;
+  }
+
+  .mobile-strip-select {
+    padding: 3px 6px;
+    border-radius: 6px;
+    border: 1px solid #cbd5e1;
+    font-size: 11px;
+    font-weight: 600;
+    background: #f8fafc;
+    color: #1e293b;
+    max-width: 140px;
   }
 
   .portal-cal-header {

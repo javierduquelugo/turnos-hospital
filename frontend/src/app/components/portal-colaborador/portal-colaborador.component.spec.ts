@@ -162,4 +162,13 @@ describe('PortalColaboradorComponent (Selector de Vista y Modo Responsive)', () 
     expect(ficha?.textContent).toContain('M8 · Mañana 8h');
     expect(ficha?.textContent).toContain('07:00 - 15:00');
   });
+
+  it('renderiza la cinta compacta de resumen móvil (portal-mobile-strip) con servicio, horas y banco', () => {
+    const el: HTMLElement = fixture.nativeElement;
+    const strip = el.querySelector('.portal-mobile-strip');
+    expect(strip).not.toBeNull();
+    expect(strip?.textContent).toContain('Urgencias Adultos');
+    expect(strip?.textContent).toContain('8h / 168h');
+    expect(strip?.textContent).toContain('+4h');
+  });
 });
