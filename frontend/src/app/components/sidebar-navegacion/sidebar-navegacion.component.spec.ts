@@ -42,18 +42,18 @@ describe('SidebarNavegacionComponent (Barra Inferior Móvil y Cajón Más)', () 
     fixture.detectChanges();
   });
 
-  it('renderiza la barra de navegación inferior (bottom-nav-bar) con 4 botones para colaborador', () => {
+  it('renderiza la barra de navegación inferior (bottom-nav-bar) con 3 botones para colaborador (sin Celular directo)', () => {
     const el: HTMLElement = fixture.nativeElement;
     const bottomNav = el.querySelector('.bottom-nav-bar');
     expect(bottomNav).not.toBeNull();
 
     const items = bottomNav?.querySelectorAll('.bottom-nav-item');
-    expect(items?.length).toBe(4);
+    expect(items?.length).toBe(3);
 
     expect(items?.[0].textContent).toContain('Mi Turno');
     expect(items?.[1].textContent).toContain('Permutas');
-    expect(items?.[2].textContent).toContain('Celular');
-    expect(items?.[3].textContent).toContain('Más');
+    expect(items?.[2].textContent).toContain('Más');
+    expect(bottomNav?.textContent).not.toContain('Celular');
   });
 
   it('marca activo el botón correspondiente a la vistaActual del colaborador', () => {
@@ -85,7 +85,7 @@ describe('SidebarNavegacionComponent (Barra Inferior Móvil y Cajón Más)', () 
     expect(component.mostrarDrawerMas()).toBeFalse();
     expect(el.querySelector('.mobile-more-sheet')).toBeNull();
 
-    const btnMas = el.querySelectorAll('.bottom-nav-bar .bottom-nav-item')[3] as HTMLButtonElement;
+    const btnMas = el.querySelectorAll('.bottom-nav-bar .bottom-nav-item')[2] as HTMLButtonElement;
     btnMas.click();
     fixture.detectChanges();
 
@@ -94,6 +94,7 @@ describe('SidebarNavegacionComponent (Barra Inferior Móvil y Cajón Más)', () 
     expect(sheet).not.toBeNull();
     expect(sheet?.textContent).toContain('Bernardo Castro Zapata');
     expect(sheet?.textContent).toContain('Colaborador Asistencial');
+    expect(sheet?.textContent).toContain('Vincular Calendario al Celular');
     expect(sheet?.textContent).toContain('Volver a la Intranet Hospitalaria');
 
     // Cerrar al pulsar el backdrop

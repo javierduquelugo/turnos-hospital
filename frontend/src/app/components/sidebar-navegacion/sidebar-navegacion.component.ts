@@ -280,15 +280,6 @@ export type VistaApp =
         <button
           type="button"
           class="bottom-nav-item"
-          (click)="abrirModalIcalDesdeMovil()"
-          title="Sincronizar calendario con Google / iPhone">
-          <span class="bottom-icon">📲</span>
-          <span class="bottom-label">Celular</span>
-        </button>
-
-        <button
-          type="button"
-          class="bottom-nav-item"
           [class.active]="mostrarDrawerMas()"
           (click)="alternarDrawerMas()"
           title="Más opciones y menú">

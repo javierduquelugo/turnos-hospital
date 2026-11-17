@@ -26,8 +26,8 @@ Para garantizar una experiencia móvil moderna y ergonómica, se implementó una
 │       (Selector Agenda/Mes, Tarjetas de Turnos, KPIs)       │
 │                                                             │
 ├─────────────────────────────────────────────────────────────┤
-│   [ 👩‍⚕️ ]           [ 🔄 ]           [ 📲 ]          [ ☰ ]   │
-│  Mi Turno        Permutas (1)       Celular         Más     │
+│        [ 👩‍⚕️ ]                  [ 🔄 ]                 [ ☰ ]  │
+│       Mi Turno               Permutas (1)              Más  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -38,12 +38,11 @@ Para garantizar una experiencia móvil moderna y ergonómica, se implementó una
    - Acciones prioritarias para el **Colaborador Asistencial**:
      - **`👩‍⚕️ Mi Turno`**: Activa la vista del calendario personal (resaltado morado institucional `#4a2096`).
      - **`🔄 Permutas`**: Lleva al panel de solicitudes de intercambio con badge numérico en tiempo real (`.bottom-badge`).
-     - **`📲 Celular`**: Dispara el modal de suscripción RFC 5545 iCal para Google Calendar y Apple Calendar.
-     - **`☰ Más`**: Abre el cajón deslizable con opciones secundarias y perfil del usuario.
+     - **`☰ Más`**: Abre el cajón deslizable con opciones secundarias, perfil del usuario y utilidades (incluyendo la vinculación al Celular / iCal).
    - Para **Coordinadores y Administradores TH**, la barra ofrece accesos rápidos a `📅 Turnos`, `🔄 Permutas`, `📊 Nómina` y `☰ Más`.
 3. **Cajón Deslizante Inferior (*Bottom Sheet Drawer*):**
    - Se despliega desde la parte inferior con animación suave (`slideUpSheet`) y telón translúcido desenfocado (`backdrop-filter: blur(2px)`).
-   - Muestra tirador de arrastre superior, logo del Hospital, tarjeta de usuario autenticado vía SSO (nombre, rol, documento) y enlaces a la Intranet Hospitalaria con confirmación.
+   - Muestra tirador de arrastre superior, logo del Hospital, tarjeta de usuario autenticado vía SSO (nombre, rol, documento), utilidades como **`📲 Vincular Calendario al Celular (iCal)`** y enlaces a la Intranet Hospitalaria con confirmación.
    - Cierre táctil inmediato tocando el backdrop o el botón `✕`.
 4. **Reserva de Espacio Inferior:** El contenedor de trabajo principal (`.main-workspace`) reserva `padding-bottom: 60px` para evitar que los botones inferiores o la última tarjeta de la agenda queden tapados.
 
