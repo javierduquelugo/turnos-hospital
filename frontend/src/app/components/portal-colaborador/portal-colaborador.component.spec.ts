@@ -171,4 +171,15 @@ describe('PortalColaboradorComponent (Selector de Vista y Modo Responsive)', () 
     expect(strip?.textContent).toContain('8h / 168h');
     expect(strip?.textContent).toContain('+4h');
   });
+
+  it('en modo AGENDA invoca desplazarAlDiaActualEnAgenda para llevar al usuario al día actual', (done) => {
+    const scrollSpy = spyOn(component, 'desplazarAlDiaActualEnAgenda').and.callThrough();
+    component.cambiarModoVista('AGENDA');
+    fixture.detectChanges();
+
+    expect(scrollSpy).toHaveBeenCalled();
+    setTimeout(() => {
+      done();
+    }, 150);
+  });
 });

@@ -1,4 +1,13 @@
-import { Component, EventEmitter, Input, Output, signal } from '@angular/core';
+import {
+  AfterViewInit,
+  Component,
+  EventEmitter,
+  Input,
+  OnChanges,
+  Output,
+  SimpleChanges,
+  signal,
+} from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import {
@@ -327,6 +336,7 @@ export interface DatosEmpleadoPortal {
 
                 <article
                   class="agenda-day-card"
+                  [id]="'agenda-card-dia-' + d.dia"
                   [class.selected-day]="diaPermutaSeleccionado === d.dia"
                   [class.today-card]="!!d.esHoy"
                   [class.holiday-card]="!!d.festivo"
@@ -795,8 +805,20 @@ export interface DatosEmpleadoPortal {
     </div>
   `,
 })
-export class PortalColaboradorComponent {
+export class PortalColaboradorComponent implements AfterViewInit, OnChanges {
   readonly modoVistaPortal = signal<'AGENDA' | 'MES'>(this.determinarModoInicial());
+
+  ngAfterViewInit(): void {
+    if (this.modoVistaPortal() === 'AGENDA') {
+      this.desplazarAlDiaActualEnAgenda('auto');
+    }
+  }
+
+  ngOnChanges(changes: SimpleChanges): void {
+    if (changes['diasDelMes'] && this.modoVistaPortal() === 'AGENDA') {
+      this.desplazarAlDiaActualEnAgenda('smooth');
+    }
+  }
 
   private determinarModoInicial(): 'AGENDA' | 'MES' {
     if (typeof window !== 'undefined') {
@@ -815,7 +837,25 @@ export class PortalColaboradorComponent {
       try {
         localStorage.setItem('rafa_portal_vista_modo', modo);
       } catch {}
+      if (modo === 'AGENDA') {
+        this.desplazarAlDiaActualEnAgenda('smooth');
+      }
     }
+  }
+
+  desplazarAlDiaActualEnAgenda(behavior: ScrollBehavior = 'smooth'): void {
+    if (typeof window === 'undefined') return;
+    setTimeout(() => {
+      const diaHoy = this.diasDelMes.find((d) => d.esHoy)?.dia;
+      const targetDia = diaHoy || this.diaPermutaSeleccionado;
+      const el =
+        document.getElementById(`agenda-card-dia-${targetDia}`) ||
+        document.querySelector('.agenda-day-card.today-card') ||
+        document.querySelector('.agenda-day-card');
+      if (el) {
+        el.scrollIntoView({ behavior, block: 'start' });
+      }
+    }, 120);
   }
 
   obtenerInfoDiaSeleccionado(): {
