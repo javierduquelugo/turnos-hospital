@@ -8,6 +8,7 @@ import {
   EmpresaContratante,
   PermutaItem,
   SesionUsuarioSso,
+  SolicitudTiempoAdicionalItem,
   TODOS_LOS_MESES,
 } from '../models';
 import { TurnosApiService } from '../turnos-api.service';
@@ -426,6 +427,15 @@ export class PortalReportesStore {
     return this.permutasAuditoria.listaPermutas().filter((p) => p.solicitanteId === id);
   });
 
+  readonly misSolicitudesTiempoAdicionalPortal = computed<SolicitudTiempoAdicionalItem[]>(() => {
+    const id = this.empleadoPortalId();
+    const anio = this.catalogos.anioSeleccionado();
+    const mes = this.mesSeleccionadoPortal();
+    return this.permutasAuditoria
+      .listaSolicitudesTiempoAdicional()
+      .filter((s) => s.empleadoId === id && s.anio === anio && s.mes === mes);
+  });
+
   // Filas consolidadas para Reportes (Multi-servicio / Multi-empresa o filtrado según alcance RBAC del rol)
   readonly datosReporteCalculados = computed(() => {
     const sesion = this.catalogos.sesionActual();
@@ -707,6 +717,41 @@ export class PortalReportesStore {
     );
   }
 
+  enviarSolicitudTiempoAdicionalDesdePortal(payload: {
+    dia: number;
+    turnoBase: string;
+    tipo: 'HORA_EXTRA_PROLONGACION' | 'DISPONIBILIDAD_LLAMADO' | 'GUARDIA_EXTRAORDINARIA';
+    horaInicio: string;
+    horaFin: string;
+    motivoCategoria: string;
+    motivoDetalle: string;
+    soporteClinico?: string;
+  }): void {
+    const datosMios = this.datosEmpleadoPortal();
+    const anioPortal = this.catalogos.anioSeleccionado();
+    const mesPortal = this.mesSeleccionadoPortal();
+    const celdaDia = datosMios.celdas?.[payload.dia];
+    const srvId =
+      celdaDia?.servicioEjecutorId ||
+      datosMios.empleado.servicioBaseId ||
+      this.catalogos.servicioSeleccionadoId();
+
+    this.permutasAuditoria.crearSolicitudTiempoAdicionalDesdePortal({
+      empleadoId: datosMios.empleado.id,
+      servicioId: srvId,
+      anio: anioPortal,
+      mes: mesPortal,
+      dia: payload.dia,
+      turnoBase: payload.turnoBase,
+      tipo: payload.tipo,
+      horaInicio: payload.horaInicio,
+      horaFin: payload.horaFin,
+      motivoCategoria: payload.motivoCategoria,
+      motivoDetalle: payload.motivoDetalle,
+      soporteClinico: payload.soporteClinico,
+    });
+  }
+
   abrirModalIcal(): void {
     const empId = this.empleadoPortalId() || this.catalogos.sesionActual()?.empleadoId || '';
     const empObj = this.catalogos.empleados().find((e) => e.id === empId);
@@ -789,7 +834,7 @@ export class PortalReportesStore {
     let lineas: string[] = [];
 
     if (sub === 'PRE_NOMINA') {
-      header = 'Periodo;Documento;Colaborador;Servicio;Cargo;Empresa;Regimen_Semanal_H;Dias_Habiles_Mes;Dias_Habiles_Prorrateados;Meta_Nominal_H;Prorrateo_H;Meta_Neta_H;HOD;HON;HDFD;HDFN;Total_Mes;Amortizadas_COMP_H;Recargo_Nocturno_Pct;Recargo_Dominical_Festivo_Pct;Recargo_Nocturno_Dominical_Festivo_Pct;Domingos_Laborados;Dom_Fest_Laborados;Compensatorio_CST;VAC_Dias;INC_Dias;LIC_Dias;FAM_Dias;Saldo_Banco_Ant;Mov_Mes;Nuevo_Saldo_Banco';
+      header = 'Periodo;Documento;Colaborador;Servicio;Cargo;Empresa;Regimen_Semanal_H;Dias_Habiles_Mes;Dias_Habiles_Prorrateados;Meta_Nominal_H;Prorrateo_H;Meta_Neta_H;HOD;HON;HDFD;HDFN;HED_25;HEN_75;HEFD;HEFN;Extras_CST_Total;Total_Mes;Amortizadas_COMP_H;Recargo_Nocturno_Pct;Recargo_Dominical_Festivo_Pct;Recargo_Nocturno_Dominical_Festivo_Pct;Domingos_Laborados;Dom_Fest_Laborados;Compensatorio_CST;VAC_Dias;INC_Dias;LIC_Dias;FAM_Dias;Saldo_Banco_Ant;Mov_Mes;Nuevo_Saldo_Banco';
       lineas = filas.map((f) =>
         [
           periodoCsv,
@@ -808,6 +853,11 @@ export class PortalReportesStore {
           numeroCsv(f.hon),
           numeroCsv(f.hdfd),
           numeroCsv(f.hdfn),
+          numeroCsv(f.hed ?? 0),
+          numeroCsv(f.hen ?? 0),
+          numeroCsv(f.hefd ?? 0),
+          numeroCsv(f.hefn ?? 0),
+          numeroCsv(f.horasExtrasTotales ?? 0),
           numeroCsv(f.horasTrabajadas),
           numeroCsv(f.horasAmortizadasComp),
           formatearPorcentaje(f.recargos.nocturno),

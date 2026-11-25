@@ -13,6 +13,7 @@ import {
   RegistroAuditoria,
   ServicioHospitalario,
   SesionUsuarioSso,
+  SolicitudTiempoAdicionalItem,
   TipoTurnoConfig,
 } from './models';
 import { hoyColombiaIso, TandaBreakTurno } from './shared/liquidacion-horas';
@@ -483,6 +484,56 @@ export class TurnosApiService {
 
   rechazarPermuta(id: string, motivo?: string): Observable<any> {
     return this.http.patch(`${this.baseUrl}/permutas/${id}/rechazar`, { motivo });
+  }
+
+  // 4.1 Solicitudes de Tiempo Adicional (Horas Extras y Llamados DISP)
+  getSolicitudesTiempoAdicional(filtros?: {
+    servicioId?: string;
+    empleadoId?: string;
+    anio?: number;
+    mes?: number;
+    estado?: string;
+  }): Observable<SolicitudTiempoAdicionalItem[]> {
+    const params: string[] = [];
+    if (filtros?.servicioId) params.push(`servicioId=${encodeURIComponent(filtros.servicioId)}`);
+    if (filtros?.empleadoId) params.push(`empleadoId=${encodeURIComponent(filtros.empleadoId)}`);
+    if (filtros?.anio) params.push(`anio=${filtros.anio}`);
+    if (filtros?.mes) params.push(`mes=${filtros.mes}`);
+    if (filtros?.estado) params.push(`estado=${encodeURIComponent(filtros.estado)}`);
+    const qs = params.length > 0 ? `?${params.join('&')}` : '';
+    return this.http.get<SolicitudTiempoAdicionalItem[]>(`${this.baseUrl}/tiempo-adicional${qs}`);
+  }
+
+  crearSolicitudTiempoAdicional(dto: {
+    empleadoId: string;
+    servicioId: string;
+    anio: number;
+    mes: number;
+    dia: number;
+    turnoBase?: string;
+    tipo?: 'HORA_EXTRA_PROLONGACION' | 'DISPONIBILIDAD_LLAMADO' | 'GUARDIA_EXTRAORDINARIA';
+    horaInicio: string;
+    horaFin: string;
+    motivoCategoria: string;
+    motivoDetalle: string;
+    soporteClinico?: string;
+  }): Observable<SolicitudTiempoAdicionalItem> {
+    return this.http.post<SolicitudTiempoAdicionalItem>(`${this.baseUrl}/tiempo-adicional`, dto);
+  }
+
+  resolverSolicitudTiempoAdicional(
+    id: string,
+    dto: {
+      accion: 'APROBAR' | 'RECHAZAR';
+      horasAprobadas?: number;
+      observacionSupervisor?: string;
+      motivoRechazo?: string;
+    }
+  ): Observable<SolicitudTiempoAdicionalItem> {
+    return this.http.patch<SolicitudTiempoAdicionalItem>(
+      `${this.baseUrl}/tiempo-adicional/${encodeURIComponent(id)}/resolver`,
+      dto
+    );
   }
 
   // 5. Novedades y Ausencias Oficiales (Intranet Hospitalaria)

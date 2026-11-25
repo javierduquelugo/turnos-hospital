@@ -21,6 +21,18 @@ enum EstadoPermuta {
   RECHAZADA
 }
 
+enum TipoTiempoAdicional {
+  HORA_EXTRA_PROLONGACION
+  DISPONIBILIDAD_LLAMADO
+  GUARDIA_EXTRAORDINARIA
+}
+
+enum EstadoTiempoAdicional {
+  PENDIENTE_SUPERVISOR
+  APROBADA
+  RECHAZADA
+}
+
 model EmpresaContratante {
   id                             String     @id @default(uuid())
   codigo                         String     @unique
@@ -85,6 +97,7 @@ model Servicio {
   coberturas                RequerimientoCobertura[]
   turnosHabilitados         ServicioTurnoHabilitado[]
   permutas                  SolicitudPermuta[]
+  solicitudesTiempoAdicional SolicitudTiempoAdicional[]
   auditorias                AuditoriaCambio[]        @relation("AuditoriasServicio")
 
   // Relación de Servicios Hermanos (Afinidad clínica/técnica para rotación)
@@ -181,6 +194,7 @@ model Empleado {
   tokensCalendario     TokenCalendario[]
   permutasSolicitadas  SolicitudPermuta[]   @relation("PermutasSolicitadas")
   permutasRecibidas    SolicitudPermuta[]   @relation("PermutasRecibidas")
+  solicitudesTiempoAdicional SolicitudTiempoAdicional[] @relation("SolicitudesTiempoAdicionalEmpleado")
   auditorias           AuditoriaCambio[]    @relation("AuditoriasEmpleado")
 
   @@index([empresaContratanteId])
@@ -405,4 +419,43 @@ model SolicitudPermuta {
   @@index([estado])
   @@index([anio, mes])
   @@map("solicitudes_permuta")
+}
+
+model SolicitudTiempoAdicional {
+  id                    String                @id @default(uuid())
+  empleadoId            String
+  empleado              Empleado              @relation("SolicitudesTiempoAdicionalEmpleado", fields: [empleadoId], references: [id])
+  servicioId            String
+  servicio              Servicio              @relation(fields: [servicioId], references: [id])
+  anio                  Int
+  mes                   Int
+  dia                   Int
+  fecha                 DateTime              @db.Date
+  turnoBase             String                @default("L")
+  tipo                  TipoTiempoAdicional   @default(HORA_EXTRA_PROLONGACION)
+  horaInicio            String                // "02:00"
+  horaFin               String                // "05:30"
+  horasCalculadas       Float                 // 3.5
+  horasAprobadas        Float?                // 3.5 o ajustada por supervisor
+  hod                   Float                 @default(0)
+  hon                   Float                 @default(0)
+  hdfd                  Float                 @default(0)
+  hdfn                  Float                 @default(0)
+  motivoCategoria       String                // "CESAREA_URGENCIA", "CIRUGIA_URGENCIA", etc.
+  motivoDetalle         String                // Justificación clínica
+  soporteClinico        String?               // Folio HC / Cx / Quirófano
+  estado                EstadoTiempoAdicional @default(PENDIENTE_SUPERVISOR)
+  supervisorId          String?
+  supervisorNombre      String?
+  observacionSupervisor String?
+  motivoRechazo         String?
+  fechaRespuesta        DateTime?
+  creadoEn              DateTime              @default(now())
+  actualizadoEn         DateTime              @updatedAt
+
+  @@index([empleadoId, fecha])
+  @@index([empleadoId, anio, mes, estado])
+  @@index([servicioId, estado])
+  @@index([anio, mes])
+  @@map("solicitudes_tiempo_adicional")
 }

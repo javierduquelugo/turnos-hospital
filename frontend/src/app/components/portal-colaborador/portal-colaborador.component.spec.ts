@@ -1,6 +1,7 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { PortalColaboradorComponent, DatosEmpleadoPortal } from './portal-colaborador.component';
 import { DiaColumna, EmpleadoHospital } from '../../models';
+import { calcularMetricasMesColaborador } from '../../calculo-turnos.helper';
 
 describe('PortalColaboradorComponent (Selector de Vista y Modo Responsive)', () => {
   let component: PortalColaboradorComponent;
@@ -181,5 +182,142 @@ describe('PortalColaboradorComponent (Selector de Vista y Modo Responsive)', () 
     setTimeout(() => {
       done();
     }, 150);
+  });
+
+  it('controla la habilitación de tiempo adicional: permite días cumplidos (M8 y DISP) y bloquea fechas futuras o periodo cerrado', () => {
+    component.portal = {
+      ...mockPortal,
+      celdas: {
+        1: { codigo: 'M8', esRotacion: false, fijada: false },
+        2: { codigo: 'DISP', esRotacion: false, fijada: false },
+        3: { codigo: 'VAC', esRotacion: false, fijada: false },
+      },
+    };
+    component.estadoCuadrante = 'PUBLICADO';
+
+    const ctrlM8Pasado = component.evaluarControlTiempoAdicional({
+      dia: 1,
+      fechaIso: '2026-11-01',
+      letraDia: 'D',
+      esDomingo: true,
+      esSabado: false,
+      esHoy: false,
+    });
+    expect(ctrlM8Pasado.habilitado).toBeTrue();
+    expect(ctrlM8Pasado.tipo).toBe('HORA_EXTRA_PROLONGACION');
+    expect(ctrlM8Pasado.etiquetaCorto).toBe('⏰ +Extra');
+
+    const ctrlDispPasado = component.evaluarControlTiempoAdicional({
+      dia: 2,
+      fechaIso: '2026-11-02',
+      letraDia: 'L',
+      esDomingo: false,
+      esSabado: false,
+      esHoy: false,
+    });
+    expect(ctrlDispPasado.habilitado).toBeTrue();
+    expect(ctrlDispPasado.tipo).toBe('DISPONIBILIDAD_LLAMADO');
+    expect(ctrlDispPasado.etiquetaCorto).toBe('🚨 +Llamado');
+
+    const ctrlVac = component.evaluarControlTiempoAdicional({
+      dia: 3,
+      fechaIso: '2026-11-03',
+      letraDia: 'M',
+      esDomingo: false,
+      esSabado: false,
+      esHoy: false,
+    });
+    expect(ctrlVac.habilitado).toBeFalse();
+
+    const ctrlFuturo = component.evaluarControlTiempoAdicional({
+      dia: 1,
+      fechaIso: '2099-12-31',
+      letraDia: 'J',
+      esDomingo: false,
+      esSabado: false,
+      esHoy: false,
+    });
+    expect(ctrlFuturo.habilitado).toBeFalse();
+
+    component.estadoCuadrante = 'CERRADO_NOMINA';
+    const ctrlCerrado = component.evaluarControlTiempoAdicional({
+      dia: 1,
+      fechaIso: '2026-11-01',
+      letraDia: 'D',
+      esDomingo: true,
+      esSabado: false,
+      esHoy: false,
+    });
+    expect(ctrlCerrado.habilitado).toBeFalse();
+  });
+
+  it('abre el modal de tiempo adicional, calcula las horas y emite enviarSolicitudTiempoAdicional', () => {
+    const emitSpy = spyOn(component.enviarSolicitudTiempoAdicional, 'emit');
+    const fakeEvent = new MouseEvent('click');
+    component.abrirModalTiempoAdicional(fakeEvent, 1);
+
+    expect(component.modalTiempoAdicionalAbierto()).toBeTrue();
+    expect(component.diaExtraModal()).toBe(1);
+    expect(component.horaInicioExtra()).toBe('15:00');
+    expect(component.horaFinExtra()).toBe('17:00');
+    expect(component.horasCalculadasModal).toBe(2);
+
+    component.motivoCategoriaExtra.set('CODIGO_AZUL_REANIMACION');
+    component.motivoDetalleExtra.set('Reanimación cardiopulmonar prolongada en sala de trauma');
+    component.soporteClinicoExtra.set('HC #90123');
+    component.confirmarEnvioTiempoAdicional();
+
+    expect(emitSpy).toHaveBeenCalledWith({
+      dia: 1,
+      turnoBase: 'M8',
+      tipo: 'HORA_EXTRA_PROLONGACION',
+      horaInicio: '15:00',
+      horaFin: '17:00',
+      motivoCategoria: 'CODIGO_AZUL_REANIMACION',
+      motivoDetalle: 'Reanimación cardiopulmonar prolongada en sala de trauma',
+      soporteClinico: 'HC #90123',
+    });
+    expect(component.modalTiempoAdicionalAbierto()).toBeFalse();
+  });
+
+  it('aplica Modelo B (Meta Mensual) en calcularMetricasMesColaborador: nivela déficit primero y liquida el excedente como Hora Extra', () => {
+    // 1. Caso Déficit: solo 1 turno M8 (8h) + 3.5h llamado nocturno DISP = 11.5h (< meta mensual 168h)
+    const celdasDeficit = {
+      1: { codigo: 'M8' as const },
+      2: {
+        codigo: 'DISP' as const,
+        horasAdicionalesAprobadas: 3.5,
+        tramosAdicionales: [
+          {
+            id: 'tr-1',
+            tipo: 'DISPONIBILIDAD_LLAMADO',
+            horaInicio: '02:00',
+            horaFin: '05:30',
+            horasAprobadas: 3.5,
+            hod: 0,
+            hon: 3.5,
+            hdfd: 0,
+            hdfn: 0,
+            motivoCategoria: 'CIRUGIA_URGENCIA',
+            motivoDetalle: 'Cesárea urgente',
+          },
+        ],
+      },
+    };
+    const metDeficit = calcularMetricasMesColaborador(
+      mockEmpleado,
+      celdasDeficit,
+      mockDias,
+      component.catalogoTurnosMap,
+      {},
+      2026,
+      11
+    );
+    expect(metDeficit.horasTrabajadas).toBe(11.5);
+    expect(metDeficit.horasAdicionalesAprobadas).toBe(3.5);
+    // Como 11.5h <= meta (168h), las 3.5h nivelan jornada ordinaria nocturna (hon = 3.5) y 0h extras
+    expect(metDeficit.hon).toBe(3.5);
+    expect(metDeficit.horasExtrasTotales).toBe(0);
+    expect(metDeficit.hen).toBe(0);
   });
 });

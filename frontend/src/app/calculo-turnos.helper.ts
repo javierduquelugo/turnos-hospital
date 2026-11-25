@@ -50,6 +50,18 @@ export interface MetricasMesColaborador {
   hdfd: number;
   /** Horas nocturnas en domingo/festivo. */
   hdfn: number;
+  /** Horas extras diurnas (+25%) causadas al superar la meta mensual (Modelo B). */
+  hed?: number;
+  /** Horas extras nocturnas (+75%) causadas al superar la meta mensual (Modelo B). */
+  hen?: number;
+  /** Horas extras dominicales/festivas diurnas causadas al superar la meta mensual (Modelo B). */
+  hefd?: number;
+  /** Horas extras dominicales/festivas nocturnas causadas al superar la meta mensual (Modelo B). */
+  hefn?: number;
+  /** Total de horas adicionales aprobadas en el periodo (prolongaciones + llamados DISP). */
+  horasAdicionalesAprobadas?: number;
+  /** Total de horas extras clasificadas por exceso sobre meta mensual. */
+  horasExtrasTotales?: number;
   horasAmortizadasComp: number;
   conteoNoches: number;
   /** Fechas calendario dom/festivo con > 0 min netos trabajados (Dom ∪ Fest). */
@@ -150,13 +162,15 @@ export function horasLiquidadasCelda(
   fechaIso: string,
   esDescanso: PredicadoDescanso = predicadoDescansoObligatorio(),
   reglas?: Partial<ReglasEmpresaContrato> | null,
-  celda?: Pick<CeldaAsignacion, 'breakInicio' | 'breakFin'> | null
+  celda?: Pick<CeldaAsignacion, 'breakInicio' | 'breakFin' | 'horasAdicionalesAprobadas'> | null
 ): number {
   const turnoEff: TurnoLiquidable | undefined =
     cfg && celda?.breakInicio && celda?.breakFin
       ? { ...cfg, breakInicio: celda.breakInicio, breakFin: celda.breakFin }
       : cfg;
-  return liquidarTurno(turnoEff, fechaIso, esDescanso, reglas).total;
+  const base = liquidarTurno(turnoEff, fechaIso, esDescanso, reglas).total;
+  const adic = Number(celda?.horasAdicionalesAprobadas) || 0;
+  return r2(base + (adic > 0 ? adic : 0));
 }
 
 function fechaIsoDelDia(anio: number, mes: number, dia: number): string {
@@ -186,8 +200,13 @@ export function resumirHorasPeriodo(
   const dBase = reglas?.diasBaseSemana ?? 6;
   const items: { fechaIso: string; codigo?: string; turno: TurnoLiquidable | undefined }[] = [];
   let horasAmortizadasComp = 0;
+  let horasAdicionalesTotal = 0;
 
   for (const [diaStr, celda] of Object.entries(celdasEmp || {})) {
+    const adicDia = Number(celda?.horasAdicionalesAprobadas) || 0;
+    if (adicDia > 0) {
+      horasAdicionalesTotal = r2(horasAdicionalesTotal + adicDia);
+    }
     const cod = (celda?.codigo || '').trim().toUpperCase();
     if (!cod || cod === 'BLANCO') continue;
     const cfg = catalogo[cod];
@@ -208,7 +227,7 @@ export function resumirHorasPeriodo(
 
   const diasHabilesProrrateados = contarDiasHabilesProrrateados(items, predFest);
   return {
-    horasTrabajadas: liquidarPeriodo(items, esDescanso, reglas).total,
+    horasTrabajadas: r2(liquidarPeriodo(items, esDescanso, reglas).total + horasAdicionalesTotal),
     horasAmortizadasComp,
     diasExonerados: diasHabilesProrrateados,
     diasHabilesProrrateados,
@@ -248,10 +267,31 @@ export function calcularMetricasMesColaborador(
   let diasInc = 0;
   let diasLic = 0;
   let diasFam = 0;
+  let adicHod = 0;
+  let adicHon = 0;
+  let adicHdfd = 0;
+  let adicHdfn = 0;
+  let adicTotal = 0;
   const items: { fechaIso: string; codigo?: string; turno: TurnoLiquidable | undefined }[] = [];
 
   for (const d of dias) {
     const celda = celdas[d.dia];
+    if (Array.isArray(celda?.tramosAdicionales) && celda.tramosAdicionales.length > 0) {
+      for (const tr of celda.tramosAdicionales) {
+        const hAp = Number(tr.horasAprobadas) || 0;
+        if (hAp <= 0) continue;
+        adicHod = r2(adicHod + (Number(tr.hod) || 0));
+        adicHon = r2(adicHon + (Number(tr.hon) || 0));
+        adicHdfd = r2(adicHdfd + (Number(tr.hdfd) || 0));
+        adicHdfn = r2(adicHdfn + (Number(tr.hdfn) || 0));
+        adicTotal = r2(adicTotal + hAp);
+      }
+    } else if (Number(celda?.horasAdicionalesAprobadas) > 0) {
+      const hAp = Number(celda?.horasAdicionalesAprobadas) || 0;
+      adicHod = r2(adicHod + hAp);
+      adicTotal = r2(adicTotal + hAp);
+    }
+
     const cod = (celda?.codigo || '').trim().toUpperCase();
     if (!cod || cod === 'BLANCO') continue;
     if (cod === 'VAC') diasVac++;
@@ -278,11 +318,7 @@ export function calcularMetricasMesColaborador(
   }
 
   const liq = liquidarPeriodo(items, predDescanso, reglas);
-  const horasTrabajadas = r2(liq.total);
-  const hod = r2(liq.hod);
-  const hon = r2(liq.hon);
-  const hdfd = r2(liq.hdfd);
-  const hdfn = r2(liq.hdfn);
+  const horasTrabajadas = r2(liq.total + adicTotal);
   const conteoDomFest = liq.diasDescansoLaborados;
   const conteoDomingos = liq.domingosLaborados;
 
@@ -313,6 +349,23 @@ export function calcularMetricasMesColaborador(
     reglas.diasBaseSemana
   );
 
+  // Modelo B: Nivelación de déficit ordinario vs Horas Extras por exceso sobre la meta mensual
+  const excesoMes = Math.max(0, r2(horasTrabajadas - meta.horasContratadasEfectivas));
+  const horasAdicionalesExtras = Math.min(adicTotal, excesoMes);
+  const horasAdicionalesNivelacion = r2(adicTotal - horasAdicionalesExtras);
+  const ratioNivel = adicTotal > 0 ? horasAdicionalesNivelacion / adicTotal : 0;
+  const ratioExtra = adicTotal > 0 ? horasAdicionalesExtras / adicTotal : 0;
+
+  const hod = r2(liq.hod + adicHod * ratioNivel);
+  const hon = r2(liq.hon + adicHon * ratioNivel);
+  const hdfd = r2(liq.hdfd + adicHdfd * ratioNivel);
+  const hdfn = r2(liq.hdfn + adicHdfn * ratioNivel);
+  const hed = r2(adicHod * ratioExtra);
+  const hen = r2(adicHon * ratioExtra);
+  const hefd = r2(adicHdfd * ratioExtra);
+  const hefn = r2(adicHdfn * ratioExtra);
+  const horasExtrasTotales = r2(hed + hen + hefd + hefn);
+
   const tieneTurnosOperativos = horasTrabajadas > 0 || horasAmortizadasComp > 0;
   const diferenciaMes =
     reglas.usaBancoHoras === false
@@ -339,6 +392,12 @@ export function calcularMetricasMesColaborador(
     hon,
     hdfd,
     hdfn,
+    hed,
+    hen,
+    hefd,
+    hefn,
+    horasAdicionalesAprobadas: adicTotal,
+    horasExtrasTotales,
     horasAmortizadasComp,
     conteoNoches,
     conteoDomFest,

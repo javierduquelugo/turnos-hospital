@@ -389,6 +389,16 @@ export class AppComponent implements OnInit {
         }),
         catchError(() => of(null))
       ),
+      typeof this.api.getSolicitudesTiempoAdicional === 'function'
+        ? this.api.getSolicitudesTiempoAdicional().pipe(
+            map((solicitudesDb) => {
+              if (Array.isArray(solicitudesDb)) {
+                this.permutasAuditoria.listaSolicitudesTiempoAdicional.set(solicitudesDb);
+              }
+            }),
+            catchError(() => of(null))
+          )
+        : of(null),
       this.api.getNovedades(anio, mes).pipe(
         map((novedadesDb) => {
           if (Array.isArray(novedadesDb)) this.cuadrante.listaNovedades.set(novedadesDb);

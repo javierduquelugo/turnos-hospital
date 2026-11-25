@@ -17,11 +17,14 @@ import {
   PermutaItem,
   RolUsuarioSso,
   ServicioHospitalario,
+  SolicitudTiempoAdicionalItem,
   TipoTurnoConfig,
 } from '../../models';
 import {
+  duracionHorarioMin,
   esCodigoExoneracionContrato,
   hoyColombiaIso,
+  r2,
 } from '../../shared/liquidacion-horas';
 import { obtenerTandasBreakDeTurno } from '../../calculo-turnos.helper';
 
@@ -192,7 +195,7 @@ export interface DatosEmpleadoPortal {
               🏥 {{ portal.servicioBase?.nombre || 'Servicio' }}
             </span>
             <span class="mobile-strip-chip chip-hours" [title]="construirTooltipMetaPortal()">
-              ⏰ {{ portal.horasTrabajadas }}h / {{ portal.horasContratadasEfectivas ?? portal.horasContratadasNominales ?? portal.empleado.horasContratoMes }}h
+              ⏰ {{ portal.horasTrabajadas }}h / {{ portal.horasContratadasEfectivas ?? portal.horasContratadasNominales ?? portal.empleado.horasContratoMes }}h{{ (portal['horasAdicionalesAprobadas'] || 0) > 0 ? ' (+' + portal['horasAdicionalesAprobadas'] + 'h⚡)' : '' }}
             </span>
             <span
               class="mobile-strip-chip chip-banco"
@@ -245,6 +248,9 @@ export interface DatosEmpleadoPortal {
             </div>
             <div class="kpi-sub">
               🌙 {{ portal.conteoNoches }} Noches • ☀️ {{ portal.conteoDomFest }} Dom/Fest ({{ portal.conteoDomingos || 0 }} dom)
+              @if ((portal['horasAdicionalesAprobadas'] || 0) > 0) {
+                <span> • ⚡ +{{ portal['horasAdicionalesAprobadas'] }}h adic.</span>
+              }
               @if ((portal.diasHabilesProrrateados ?? portal.diasExonerados ?? 0) > 0) {
                 <span> • 📉 -{{ portal.horasExoneradas || 0 }}h ({{ portal.diasHabilesProrrateados ?? portal.diasExonerados }} d.h.)</span>
               }
@@ -366,6 +372,16 @@ export interface DatosEmpleadoPortal {
                           {{ celdaMia.codigo }} · {{ cfgMio ? cfgMio.nombre : celdaMia.codigo }}
                         </span>
                         <span class="agenda-shift-hours">⏰ {{ cfgMio ? cfgMio.horario : 'Turno programado' }}</span>
+                        @if ((celdaMia.horasAdicionalesAprobadas || 0) > 0) {
+                          <span class="badge-extra-aprobada" title="Tiempo adicional aprobado por supervisión">
+                            +{{ celdaMia.horasAdicionalesAprobadas }}h ⚡
+                          </span>
+                        }
+                        @if ((celdaMia.solicitudesPendientesCount || 0) > 0) {
+                          <span class="badge-extra-pendiente" title="Reporte de tiempo adicional en revisión por supervisión">
+                            ⏳ Extra pend.
+                          </span>
+                        }
                       </div>
 
                       <div class="agenda-shift-meta">
@@ -391,15 +407,51 @@ export interface DatosEmpleadoPortal {
                       <div class="agenda-shift-free">
                         <span class="agenda-free-badge">🏖️ Descanso (Libre)</span>
                         <span class="agenda-free-desc">Disfrute de descanso semanal programado</span>
+                        @if ((celdaMia?.horasAdicionalesAprobadas || 0) > 0) {
+                          <span class="badge-extra-aprobada">
+                            +{{ celdaMia?.horasAdicionalesAprobadas }}h ⚡
+                          </span>
+                        }
+                        @if ((celdaMia?.solicitudesPendientesCount || 0) > 0) {
+                          <span class="badge-extra-pendiente">⏳ Extra pend.</span>
+                        }
                       </div>
                     } @else {
                       <div class="agenda-shift-unassigned">
                         <span class="agenda-unassigned-badge">⚪ Sin turno asignado</span>
+                        @if ((celdaMia?.horasAdicionalesAprobadas || 0) > 0) {
+                          <span class="badge-extra-aprobada">
+                            +{{ celdaMia?.horasAdicionalesAprobadas }}h ⚡
+                          </span>
+                        }
+                        @if ((celdaMia?.solicitudesPendientesCount || 0) > 0) {
+                          <span class="badge-extra-pendiente">⏳ Extra pend.</span>
+                        }
+                      </div>
+                    }
+                    @if (celdaMia?.tramosAdicionales && celdaMia!.tramosAdicionales!.length > 0) {
+                      <div class="agenda-extra-tramos-list">
+                        @for (tr of celdaMia!.tramosAdicionales!; track tr.id) {
+                          <span class="agenda-extra-tramo-pill">
+                            ⚡ {{ tr.horaInicio }}–{{ tr.horaFin }} (+{{ tr.horasAprobadas }}h) · {{ tr.motivoDetalle }}
+                          </span>
+                        }
                       </div>
                     }
                   </div>
 
                   <div class="agenda-day-actions">
+                    @let ctrlExtraDia = evaluarControlTiempoAdicional(d);
+                    @if (ctrlExtraDia.habilitado) {
+                      <button
+                        type="button"
+                        class="btn-agenda-action btn-extra-trigger"
+                        [class.is-disp]="ctrlExtraDia.tipo === 'DISPONIBILIDAD_LLAMADO'"
+                        (click)="abrirModalTiempoAdicional($event, d.dia)"
+                        [title]="ctrlExtraDia.titulo">
+                        {{ ctrlExtraDia.etiquetaCorto }}
+                      </button>
+                    }
                     <button
                       type="button"
                       class="btn-agenda-action btn-permuta-trigger"
@@ -470,6 +522,13 @@ export interface DatosEmpleadoPortal {
                     }
                   </span>
                   <div class="emp-day-head-tags">
+                    @if ((celdaMia?.horasAdicionalesAprobadas || 0) > 0) {
+                      <span class="emp-extra-tag" [title]="'+' + celdaMia?.horasAdicionalesAprobadas + 'h adicionales aprobadas'">
+                        +{{ celdaMia?.horasAdicionalesAprobadas }}h⚡
+                      </span>
+                    } @else if ((celdaMia?.solicitudesPendientesCount || 0) > 0) {
+                      <span class="emp-extra-pend-tag" title="Reporte de tiempo adicional en revisión">⏳</span>
+                    }
                     @if (d.festivo) {
                       <span class="emp-festivo-tag" [title]="d.festivo.nombre">🇨🇴 Festivo</span>
                     }
@@ -549,6 +608,7 @@ export interface DatosEmpleadoPortal {
 
           <!-- Ficha Inteligente del Día Seleccionado en Modo Cuadrícula -->
           @let diaSelInfo = obtenerInfoDiaSeleccionado();
+          @let ctrlExtraSel = diaSelInfo.columna ? evaluarControlTiempoAdicional(diaSelInfo.columna) : null;
           <div class="dia-seleccionado-ficha">
             <div class="ficha-header">
               <div class="ficha-title-block">
@@ -559,8 +619,27 @@ export interface DatosEmpleadoPortal {
                 @if (diaSelInfo.esHoy) {
                   <span class="badge-law">📍 Hoy</span>
                 }
+                @if ((diaSelInfo.celda?.horasAdicionalesAprobadas || 0) > 0) {
+                  <span class="badge-extra-aprobada">
+                    +{{ diaSelInfo.celda?.horasAdicionalesAprobadas }}h ⚡ Aprobadas
+                  </span>
+                }
               </div>
               <div class="ficha-actions">
+                @if (ctrlExtraSel?.habilitado) {
+                  <button
+                    type="button"
+                    class="btn-extra-ficha"
+                    [class.is-disp]="ctrlExtraSel?.tipo === 'DISPONIBILIDAD_LLAMADO'"
+                    (click)="abrirModalTiempoAdicional($event, diaPermutaSeleccionado)"
+                    [title]="ctrlExtraSel?.titulo || ''">
+                    {{ ctrlExtraSel?.etiquetaLargo }}
+                  </button>
+                } @else if (ctrlExtraSel?.motivoBloqueo) {
+                  <span class="ficha-extra-blocked" [title]="ctrlExtraSel?.motivoBloqueo || ''">
+                    🔒 {{ ctrlExtraSel?.motivoBloqueo }}
+                  </span>
+                }
                 @if (diaSelInfo.celda?.codigo && diaSelInfo.celda?.codigo !== 'L') {
                   <button
                     type="button"
@@ -602,6 +681,16 @@ export interface DatosEmpleadoPortal {
               } @else {
                 <div class="ficha-unassigned-card">
                   <span>⚪ <strong>Sin turno programado para este día</strong></span>
+                </div>
+              }
+              @if (diaSelInfo.celda?.tramosAdicionales && diaSelInfo.celda!.tramosAdicionales!.length > 0) {
+                <div class="ficha-extra-tramos">
+                  @for (tr of diaSelInfo.celda!.tramosAdicionales!; track tr.id) {
+                    <div class="ficha-extra-tramo-item">
+                      <strong>⚡ Tiempo adicional aprobado (+{{ tr.horasAprobadas }}h):</strong>
+                      <span>Franja {{ tr.horaInicio }}–{{ tr.horaFin }} • [{{ tr.motivoCategoria }}] {{ tr.motivoDetalle }}</span>
+                    </div>
+                  }
                 </div>
               }
             </div>
@@ -748,6 +837,60 @@ export interface DatosEmpleadoPortal {
                 }
               </div>
             </div>
+
+            <!-- Sección de Mis Reportes de Tiempo Adicional / Llamados DISP -->
+            <div class="portal-sent-section">
+              <div class="portal-sent-header-row">
+                <h4 class="portal-sent-heading">⏰ Mis Reportes de Tiempo Adicional / Llamados DISP:</h4>
+                @let colDiaActual = obtenerColumnaDia(diaPermutaSeleccionado);
+                @let ctrlExtraPanel = colDiaActual ? evaluarControlTiempoAdicional(colDiaActual) : null;
+                @if (ctrlExtraPanel?.habilitado) {
+                  <button
+                    type="button"
+                    class="btn-extra-ficha"
+                    [class.is-disp]="ctrlExtraPanel?.tipo === 'DISPONIBILIDAD_LLAMADO'"
+                    (click)="abrirModalTiempoAdicional($event, diaPermutaSeleccionado)">
+                    {{ ctrlExtraPanel?.etiquetaLargo }} (Día {{ diaPermutaSeleccionado }})
+                  </button>
+                }
+              </div>
+              <div class="permutas-list">
+                @for (st of misSolicitudesTiempoAdicional; track st.id) {
+                  <div class="permuta-item">
+                    <div>
+                      <div class="permuta-title">
+                        Día {{ st.dia }} ({{ formatearPeriodoPermuta(st.mes, st.anio) }}) · Turno base <code>{{ st.turnoBase }}</code>:
+                        <strong>{{ st.horaInicio }}–{{ st.horaFin }}</strong>
+                        (+{{ st.horasAprobadas ?? st.horasCalculadas }}h)
+                      </div>
+                      <div class="permuta-validation">
+                        [{{ st.motivoCategoria }}] {{ st.motivoDetalle }}
+                        @if (st.soporteClinico) {
+                          <span> • Soporte: <b>{{ st.soporteClinico }}</b></span>
+                        }
+                      </div>
+                      @if (st.observacionSupervisor) {
+                        <div class="permuta-meta">Nota Supervisión: {{ st.observacionSupervisor }}</div>
+                      }
+                      @if (st.motivoRechazo) {
+                        <div class="permuta-reject-reason">Motivo rechazo: {{ st.motivoRechazo }}</div>
+                      }
+                    </div>
+                    <div>
+                      @if (st.estado === 'PENDIENTE_SUPERVISOR') {
+                        <span class="status-tag status-tag-sup">⏳ En revisión Jefatura</span>
+                      } @else if (st.estado === 'APROBADA') {
+                        <span class="status-tag status-tag-ok">✅ Aprobada (+{{ st.horasAprobadas ?? st.horasCalculadas }}h ⚡)</span>
+                      } @else {
+                        <span class="status-tag status-tag-no">❌ Rechazada</span>
+                      }
+                    </div>
+                  </div>
+                } @empty {
+                  <div class="text-muted">No has registrado reportes de horas extras o llamados de disponibilidad en este mes.</div>
+                }
+              </div>
+            </div>
           </div>
 
           <!-- ¿Quién está de turno conmigo ese día? -->
@@ -802,11 +945,142 @@ export interface DatosEmpleadoPortal {
           </div>
         </div>
       }
+
+      <!-- MODAL INTERACTIVO: REPORTAR HORA EXTRA O LLAMADO EN DISPONIBILIDAD (MODELO B) -->
+      @if (modalTiempoAdicionalAbierto()) {
+        <div class="modal-backdrop" (click)="cerrarModalTiempoAdicional()">
+          <div
+            class="modal-box extra-modal-box"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="modal-extra-title"
+            (click)="$event.stopPropagation()">
+            <div class="modal-header">
+              <h3 id="modal-extra-title">
+                @if (tipoExtraModal() === 'DISPONIBILIDAD_LLAMADO') {
+                  🚨 Reportar Atención Presencial por Llamado (DISP)
+                } @else if (tipoExtraModal() === 'GUARDIA_EXTRAORDINARIA') {
+                  ⚡ Reportar Guardia Extraordinaria Asistida
+                } @else {
+                  ⏰ Reportar Prolongación de Turno / Tiempo Adicional
+                }
+              </h3>
+              <button type="button" class="btn-close-modal" aria-label="Cerrar diálogo" (click)="cerrarModalTiempoAdicional()">✕</button>
+            </div>
+
+            <div class="modal-body extra-modal-body">
+              <div class="extra-modal-context-bar">
+                <span>📅 <strong>Día {{ diaExtraModal() }} de {{ nombreMesSeleccionado }} {{ anioSeleccionado }}</strong></span>
+                <span>Turno en Cuadrante: <code>{{ turnoBaseExtraModal() }}</code></span>
+              </div>
+
+              <div class="extra-modal-legal-info">
+                ⚖️ <strong>Liquidación Automática (Modelo B — Meta Mensual):</strong>
+                Una vez validado por tu Coordinador de Servicio, este tiempo se suma a tus horas trabajadas del mes. Si tienes déficit frente a tu meta mensual, nivela tu jornada ordinaria; todo lo que supere tu meta mensual se liquida automáticamente con los recargos CST de ley (+25% diurno, +75% nocturno o festivo).
+              </div>
+
+              <div class="extra-time-grid">
+                <div class="extra-form-field">
+                  <label for="extra-hora-inicio">Hora Inicio Real:</label>
+                  <input
+                    id="extra-hora-inicio"
+                    type="time"
+                    class="extra-input"
+                    [ngModel]="horaInicioExtra()"
+                    (ngModelChange)="horaInicioExtra.set($event)" />
+                </div>
+                <div class="extra-form-field">
+                  <label for="extra-hora-fin">Hora Fin Real:</label>
+                  <input
+                    id="extra-hora-fin"
+                    type="time"
+                    class="extra-input"
+                    [ngModel]="horaFinExtra()"
+                    (ngModelChange)="horaFinExtra.set($event)" />
+                </div>
+                <div class="extra-duration-box" [class.is-invalid]="horasCalculadasModal <= 0 || horasCalculadasModal > 12">
+                  <span class="extra-dur-label">Duración Efectiva</span>
+                  <strong class="extra-dur-val">{{ horasCalculadasModal > 0 ? '+' + horasCalculadasModal + ' h' : 'Inválida' }}</strong>
+                </div>
+              </div>
+
+              <div class="extra-form-field">
+                <label for="extra-motivo-cat">Motivo Asistencial Justificado (Obligatorio):</label>
+                <select
+                  id="extra-motivo-cat"
+                  class="extra-input"
+                  [ngModel]="motivoCategoriaExtra()"
+                  (ngModelChange)="motivoCategoriaExtra.set($event)">
+                  <option value="CIRUGIA_URGENCIA">Cirugía de urgencia / Laparotomía / Trauma en Quirófano</option>
+                  <option value="CESAREA_URGENCIA">Cesárea de urgencia / Código Rojo Ginecoobstétrico</option>
+                  <option value="CODIGO_AZUL_REANIMACION">Entrega de guardia tardía por Reanimación / Código Azul</option>
+                  <option value="SOBREDEMANDA_URGENCIAS">Contingencia por sobredemanda crítica en el servicio</option>
+                  <option value="RELEVO_TARDIO">Relevo asistencial no se presentó a tiempo</option>
+                  <option value="OTRO_ASISTENCIAL">Otro procedimiento asistencial no diferible</option>
+                </select>
+              </div>
+
+              <div class="extra-form-field">
+                <label for="extra-motivo-det">Descripción Clínica / Procedimiento Realizado (Obligatorio):</label>
+                <textarea
+                  id="extra-motivo-det"
+                  rows="2"
+                  class="extra-input extra-textarea"
+                  placeholder="Ej: Atención de código rojo obstétrico en Quirófano 2..."
+                  [ngModel]="motivoDetalleExtra()"
+                  (ngModelChange)="motivoDetalleExtra.set($event)"></textarea>
+              </div>
+
+              <div class="extra-form-field">
+                <label for="extra-soporte">Soporte Clínico de Verificación (Folio HC / Quirófano / Cama — Opcional):</label>
+                <input
+                  id="extra-soporte"
+                  type="text"
+                  class="extra-input"
+                  placeholder="Ej: HC #849201 · Quirófano 2"
+                  [ngModel]="soporteClinicoExtra()"
+                  (ngModelChange)="soporteClinicoExtra.set($event)" />
+              </div>
+
+              @if (errorValidacionModalExtra()) {
+                <div class="portal-notice-danger">
+                  ⚠️ {{ errorValidacionModalExtra() }}
+                </div>
+              }
+
+              <div class="extra-modal-footer">
+                <button type="button" class="btn-outline" (click)="cerrarModalTiempoAdicional()">
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  class="btn-primary"
+                  [disabled]="horasCalculadasModal <= 0 || horasCalculadasModal > 12 || motivoDetalleExtra().trim().length < 4"
+                  (click)="confirmarEnvioTiempoAdicional()">
+                  📨 Enviar a Supervisión ({{ horasCalculadasModal > 0 ? '+' + horasCalculadasModal + 'h' : '—' }})
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      }
     </div>
   `,
 })
 export class PortalColaboradorComponent implements AfterViewInit, OnChanges {
   readonly modoVistaPortal = signal<'AGENDA' | 'MES'>(this.determinarModoInicial());
+
+  // Estado reactivo del modal de Tiempo Adicional / Llamado DISP
+  readonly modalTiempoAdicionalAbierto = signal<boolean>(false);
+  readonly diaExtraModal = signal<number>(1);
+  readonly turnoBaseExtraModal = signal<string>('L');
+  readonly tipoExtraModal = signal<'HORA_EXTRA_PROLONGACION' | 'DISPONIBILIDAD_LLAMADO' | 'GUARDIA_EXTRAORDINARIA'>('HORA_EXTRA_PROLONGACION');
+  readonly horaInicioExtra = signal<string>('15:00');
+  readonly horaFinExtra = signal<string>('17:00');
+  readonly motivoCategoriaExtra = signal<string>('CIRUGIA_URGENCIA');
+  readonly motivoDetalleExtra = signal<string>('');
+  readonly soporteClinicoExtra = signal<string>('');
+  readonly errorValidacionModalExtra = signal<string>('');
 
   ngAfterViewInit(): void {
     if (this.modoVistaPortal() === 'AGENDA') {
@@ -915,6 +1189,7 @@ export class PortalColaboradorComponent implements AfterViewInit, OnChanges {
   @Input() companeroPermutaId = '';
   @Input() asignaciones: Record<string, Record<number, CeldaAsignacion>> = {};
   @Input() misSolicitudesEnviadas: PermutaItem[] = [];
+  @Input() misSolicitudesTiempoAdicional: SolicitudTiempoAdicionalItem[] = [];
   @Input() equipoDeGuardiaDia: Array<{ empleado: EmpleadoHospital; turno: string; celda?: CeldaAsignacion }> = [];
 
   @Output() cambiarMes = new EventEmitter<number>();
@@ -927,12 +1202,190 @@ export class PortalColaboradorComponent implements AfterViewInit, OnChanges {
   @Output() rechazarPropuestaPar = new EventEmitter<string>();
   @Output() cambiarCompaneroPermuta = new EventEmitter<string>();
   @Output() enviarSolicitudPermuta = new EventEmitter<void>();
+  @Output() enviarSolicitudTiempoAdicional = new EventEmitter<{
+    dia: number;
+    turnoBase: string;
+    tipo: 'HORA_EXTRA_PROLONGACION' | 'DISPONIBILIDAD_LLAMADO' | 'GUARDIA_EXTRAORDINARIA';
+    horaInicio: string;
+    horaFin: string;
+    motivoCategoria: string;
+    motivoDetalle: string;
+    soporteClinico?: string;
+  }>();
   @Output() abrirMenuContextualPortal = new EventEmitter<{
     dia: number;
     clientX: number;
     clientY: number;
   }>();
   @Output() abrirInspectorDiaPortal = new EventEmitter<number>();
+
+  get horasCalculadasModal(): number {
+    const durMin = duracionHorarioMin(this.horaInicioExtra(), this.horaFinExtra(), false);
+    if (durMin === null || durMin < 15 || durMin > 12 * 60) return 0;
+    return r2(durMin / 60);
+  }
+
+  obtenerColumnaDia(dia: number): DiaColumna | undefined {
+    return this.diasDelMes.find((d) => d.dia === dia);
+  }
+
+  evaluarControlTiempoAdicional(d: DiaColumna): {
+    habilitado: boolean;
+    motivoBloqueo?: string;
+    etiquetaCorto: string;
+    etiquetaLargo: string;
+    titulo: string;
+    tipo: 'HORA_EXTRA_PROLONGACION' | 'DISPONIBILIDAD_LLAMADO' | 'GUARDIA_EXTRAORDINARIA';
+  } {
+    const celda = this.obtenerCeldaDia(d.dia);
+    const cod = (celda?.codigo || 'L').trim().toUpperCase();
+    const cfg = this.obtenerConfigTurno(cod);
+    const tipo: 'HORA_EXTRA_PROLONGACION' | 'DISPONIBILIDAD_LLAMADO' | 'GUARDIA_EXTRAORDINARIA' =
+      cod === 'DISP'
+        ? 'DISPONIBILIDAD_LLAMADO'
+        : cod === 'L' || cod === 'S' || !cod
+          ? 'GUARDIA_EXTRAORDINARIA'
+          : 'HORA_EXTRA_PROLONGACION';
+
+    const etiquetaCorto =
+      tipo === 'DISPONIBILIDAD_LLAMADO'
+        ? '🚨 +Llamado'
+        : tipo === 'GUARDIA_EXTRAORDINARIA'
+          ? '⚡ +Guardia'
+          : '⏰ +Extra';
+
+    const etiquetaLargo =
+      tipo === 'DISPONIBILIDAD_LLAMADO'
+        ? '🚨 Reportar Llamado DISP'
+        : tipo === 'GUARDIA_EXTRAORDINARIA'
+          ? '⚡ Reportar Guardia Extra'
+          : '⏰ Reportar Hora Extra';
+
+    if (this.estadoCuadrante === 'CERRADO_NOMINA') {
+      return {
+        habilitado: false,
+        motivoBloqueo: 'Periodo cerrado en Nómina',
+        etiquetaCorto,
+        etiquetaLargo,
+        titulo: 'El periodo ya fue cerrado para nómina',
+        tipo,
+      };
+    }
+    if (this.estadoCuadrante !== 'PUBLICADO') {
+      return {
+        habilitado: false,
+        motivoBloqueo: 'Cuadrante aún no publicado',
+        etiquetaCorto,
+        etiquetaLargo,
+        titulo: 'Solo disponible en cuadrantes publicados',
+        tipo,
+      };
+    }
+    if (cfg?.esAusencia || this.esAusenciaCodigo(cod)) {
+      return {
+        habilitado: false,
+        motivoBloqueo: `Día con ausencia oficial (${cod})`,
+        etiquetaCorto,
+        etiquetaLargo,
+        titulo: 'No aplica en días de ausencia oficial',
+        tipo,
+      };
+    }
+    const hoyIso = hoyColombiaIso();
+    if (d.fechaIso > hoyIso) {
+      return {
+        habilitado: false,
+        motivoBloqueo: 'Disponible al cumplirse la fecha',
+        etiquetaCorto,
+        etiquetaLargo,
+        titulo: 'Solo se habilita para el día actual o días pasados',
+        tipo,
+      };
+    }
+
+    return {
+      habilitado: true,
+      etiquetaCorto,
+      etiquetaLargo,
+      titulo:
+        tipo === 'DISPONIBILIDAD_LLAMADO'
+          ? 'Reportar atención presencial por llamado de urgencia en Disponibilidad'
+          : 'Reportar tiempo adicional trabajado en este día',
+      tipo,
+    };
+  }
+
+  abrirModalTiempoAdicional(event: Event, dia: number): void {
+    event.stopPropagation();
+    this.seleccionarDiaEnPortal.emit(dia);
+    const col = this.obtenerColumnaDia(dia);
+    if (!col) return;
+    const ctrl = this.evaluarControlTiempoAdicional(col);
+    if (!ctrl.habilitado) return;
+
+    const celda = this.obtenerCeldaDia(dia);
+    const cod = (celda?.codigo || 'L').trim().toUpperCase();
+    const cfg = this.obtenerConfigTurno(cod);
+
+    this.diaExtraModal.set(dia);
+    this.turnoBaseExtraModal.set(cod || 'L');
+    this.tipoExtraModal.set(ctrl.tipo);
+    this.errorValidacionModalExtra.set('');
+
+    if (ctrl.tipo === 'DISPONIBILIDAD_LLAMADO') {
+      this.horaInicioExtra.set('02:00');
+      this.horaFinExtra.set('05:00');
+      this.motivoCategoriaExtra.set('CIRUGIA_URGENCIA');
+    } else if (cfg && cfg.horaFin && cfg.horaFin !== '00:00' && cfg.horaFin !== '23:59') {
+      this.horaInicioExtra.set(cfg.horaFin);
+      const [hStr, mStr] = cfg.horaFin.split(':');
+      const hFinSugerida = (Number(hStr) + 2) % 24;
+      this.horaFinExtra.set(`${String(hFinSugerida).padStart(2, '0')}:${mStr || '00'}`);
+      this.motivoCategoriaExtra.set('CODIGO_AZUL_REANIMACION');
+    } else {
+      this.horaInicioExtra.set('14:00');
+      this.horaFinExtra.set('17:00');
+      this.motivoCategoriaExtra.set('SOBREDEMANDA_URGENCIAS');
+    }
+
+    this.motivoDetalleExtra.set('');
+    this.soporteClinicoExtra.set('');
+    this.modalTiempoAdicionalAbierto.set(true);
+  }
+
+  cerrarModalTiempoAdicional(): void {
+    this.modalTiempoAdicionalAbierto.set(false);
+    this.errorValidacionModalExtra.set('');
+  }
+
+  confirmarEnvioTiempoAdicional(): void {
+    const hCalc = this.horasCalculadasModal;
+    if (hCalc <= 0 || hCalc > 12) {
+      this.errorValidacionModalExtra.set(
+        'La franja horaria debe tener una duración válida entre 15 minutos y 12 horas.'
+      );
+      return;
+    }
+    const detalle = this.motivoDetalleExtra().trim();
+    if (detalle.length < 4) {
+      this.errorValidacionModalExtra.set(
+        'Por favor describe brevemente el procedimiento o motivo clínico.'
+      );
+      return;
+    }
+
+    this.enviarSolicitudTiempoAdicional.emit({
+      dia: this.diaExtraModal(),
+      turnoBase: this.turnoBaseExtraModal(),
+      tipo: this.tipoExtraModal(),
+      horaInicio: this.horaInicioExtra(),
+      horaFin: this.horaFinExtra(),
+      motivoCategoria: this.motivoCategoriaExtra(),
+      motivoDetalle: detalle,
+      soporteClinico: this.soporteClinicoExtra().trim() || undefined,
+    });
+    this.cerrarModalTiempoAdicional();
+  }
 
   onCardContextMenu(event: MouseEvent, dia: number): void {
     event.preventDefault();

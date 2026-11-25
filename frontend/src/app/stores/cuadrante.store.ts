@@ -589,22 +589,22 @@ export class CuadranteStore {
 
       for (const d of dias) {
         const celda = celdasEmp[d.dia];
-        const cod = celda?.codigo || '';
-        if (!cod) continue;
-        const cfg = catalogo[cod];
-        if (!cfg || cfg.esAusencia) continue;
+        if (!celda) continue;
+        const cod = celda.codigo || '';
+        const cfg = cod ? catalogo[cod] : undefined;
+        if (cfg?.esAusencia) continue;
         const hOrd = horasLiquidadasCelda(cfg, d.fechaIso, esDescansoPredicado, reglas, celda);
         if (hOrd <= 0) continue;
 
         const ejecutorId = celda?.servicioEjecutorId || emp.servicioBaseId;
         horasPorServicioMap.set(
           ejecutorId,
-          (horasPorServicioMap.get(ejecutorId) || 0) + hOrd
+          r2((horasPorServicioMap.get(ejecutorId) || 0) + hOrd)
         );
         if (ejecutorId === srvId) {
-          horasLocales += hOrd;
+          horasLocales = r2(horasLocales + hOrd);
         } else {
-          horasOtrosServicios += hOrd;
+          horasOtrosServicios = r2(horasOtrosServicios + hOrd);
         }
       }
 
@@ -1479,6 +1479,15 @@ export class CuadranteStore {
                 ...(celdaDb.breakTandaOrden != null ? { breakTandaOrden: Number(celdaDb.breakTandaOrden) } : {}),
                 ...(celdaDb.breakInicio ? { breakInicio: celdaDb.breakInicio } : {}),
                 ...(celdaDb.breakFin ? { breakFin: celdaDb.breakFin } : {}),
+                ...(Number(celdaDb.horasAdicionalesAprobadas) > 0
+                  ? { horasAdicionalesAprobadas: Number(celdaDb.horasAdicionalesAprobadas) }
+                  : {}),
+                ...(Number(celdaDb.solicitudesPendientesCount) > 0
+                  ? { solicitudesPendientesCount: Number(celdaDb.solicitudesPendientesCount) }
+                  : {}),
+                ...(Array.isArray(celdaDb.tramosAdicionales) && celdaDb.tramosAdicionales.length > 0
+                  ? { tramosAdicionales: celdaDb.tramosAdicionales }
+                  : {}),
               };
             }
             mapaPeriodo[empId] = filaEmp;
@@ -1817,6 +1826,9 @@ export class CuadranteStore {
         esRotacion: esRotacionDest,
         servicioEjecutorId: liberaPropiedadDia ? undefined : ultimoPaso.servicioId,
         ...(celdaPre?.nota ? { nota: celdaPre.nota } : {}),
+        ...(celdaPre?.horasAdicionalesAprobadas ? { horasAdicionalesAprobadas: celdaPre.horasAdicionalesAprobadas } : {}),
+        ...(celdaPre?.solicitudesPendientesCount ? { solicitudesPendientesCount: celdaPre.solicitudesPendientesCount } : {}),
+        ...(celdaPre?.tramosAdicionales ? { tramosAdicionales: celdaPre.tramosAdicionales } : {}),
         ...(!liberaPropiedadDia && c.breakTandaOrdenAnterior != null
           ? {
               breakTandaOrden: c.breakTandaOrdenAnterior,
@@ -1982,6 +1994,9 @@ export class CuadranteStore {
         esRotacion: esRotacionDest,
         servicioEjecutorId: liberaPropiedadDia ? undefined : ultimoPaso.servicioId,
         ...(celdaPre?.nota ? { nota: celdaPre.nota } : {}),
+        ...(celdaPre?.horasAdicionalesAprobadas ? { horasAdicionalesAprobadas: celdaPre.horasAdicionalesAprobadas } : {}),
+        ...(celdaPre?.solicitudesPendientesCount ? { solicitudesPendientesCount: celdaPre.solicitudesPendientesCount } : {}),
+        ...(celdaPre?.tramosAdicionales ? { tramosAdicionales: celdaPre.tramosAdicionales } : {}),
         ...(!liberaPropiedadDia && c.breakTandaOrdenAnterior != null
           ? {
               breakTandaOrden: c.breakTandaOrdenAnterior,
@@ -2371,6 +2386,9 @@ export class CuadranteStore {
       esRotacion,
       servicioEjecutorId: liberaPropiedadDia ? undefined : srvId,
       ...(celdaActual?.nota ? { nota: celdaActual.nota } : {}),
+      ...(celdaActual?.horasAdicionalesAprobadas ? { horasAdicionalesAprobadas: celdaActual.horasAdicionalesAprobadas } : {}),
+      ...(celdaActual?.solicitudesPendientesCount ? { solicitudesPendientesCount: celdaActual.solicitudesPendientesCount } : {}),
+      ...(celdaActual?.tramosAdicionales ? { tramosAdicionales: celdaActual.tramosAdicionales } : {}),
       ...(breakAsig.breakTandaOrden != null && breakAsig.breakInicio && breakAsig.breakFin
         ? {
             breakTandaOrden: breakAsig.breakTandaOrden,
@@ -3626,7 +3644,7 @@ export class CuadranteStore {
     const mes = this.catalogos.mesSeleccionado();
     const srvActual = this.catalogos.servicioActual();
     const encabezadosDias = dias.map((d) => `Dia_${d.dia}`).join(';');
-    const header = `Periodo;Documento;Colaborador;Cargo;Empresa;Regimen_Semanal_H;Servicio;Dias_Habiles_Mes;Dias_Habiles_Prorrateados;Meta_Nominal_H;Prorrateo_H;Meta_Neta_H;HOD;HON;HDFD;HDFN;Horas_Trabajadas;Amortizadas_COMP_H;Recargo_Nocturno_Pct;Recargo_Dominical_Festivo_Pct;Recargo_Nocturno_Dominical_Festivo_Pct;Domingos_Laborados;Dom_Fest_Laborados;Compensatorio_Causado;Dias_VAC;Dias_INC;Dias_LIC;Dias_FAM;Saldo_Banco_Anterior;Diferencia_Mes;Nuevo_Saldo_Banco;${encabezadosDias}`;
+    const header = `Periodo;Documento;Colaborador;Cargo;Empresa;Regimen_Semanal_H;Servicio;Dias_Habiles_Mes;Dias_Habiles_Prorrateados;Meta_Nominal_H;Prorrateo_H;Meta_Neta_H;HOD;HON;HDFD;HDFN;HED_25;HEN_75;HEFD;HEFN;Extras_CST_Total;Horas_Trabajadas;Amortizadas_COMP_H;Recargo_Nocturno_Pct;Recargo_Dominical_Festivo_Pct;Recargo_Nocturno_Dominical_Festivo_Pct;Domingos_Laborados;Dom_Fest_Laborados;Compensatorio_Causado;Dias_VAC;Dias_INC;Dias_LIC;Dias_FAM;Saldo_Banco_Anterior;Diferencia_Mes;Nuevo_Saldo_Banco;${encabezadosDias}`;
     const periodoCsv = `${anio}-${String(mes).padStart(2, '0')}`;
 
     const lineas = filas.map((f) => {
@@ -3648,6 +3666,11 @@ export class CuadranteStore {
         numeroCsv(f.hon),
         numeroCsv(f.hdfd),
         numeroCsv(f.hdfn),
+        numeroCsv(f.hed ?? 0),
+        numeroCsv(f.hen ?? 0),
+        numeroCsv(f.hefd ?? 0),
+        numeroCsv(f.hefn ?? 0),
+        numeroCsv(f.horasExtrasTotales ?? 0),
         numeroCsv(f.horasTrabajadas),
         numeroCsv(f.horasAmortizadasComp),
         formatearPorcentaje(f.recargos.nocturno),

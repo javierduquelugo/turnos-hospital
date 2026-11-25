@@ -1,7 +1,13 @@
 import { Component, EventEmitter, HostListener, Input, Output } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { PermutaItem, RegistroAuditoria, ServicioHospitalario, SesionUsuarioSso } from '../../models';
+import {
+  PermutaItem,
+  RegistroAuditoria,
+  ServicioHospitalario,
+  SesionUsuarioSso,
+  SolicitudTiempoAdicionalItem,
+} from '../../models';
 import { coincideBusquedaCampos, dividirTerminosBusqueda } from '../../utils/busqueda-texto';
 
 @Component({
@@ -146,8 +152,8 @@ import { coincideBusquedaCampos, dividirTerminosBusqueda } from '../../utils/bus
               <div class="permuta-item" [class.permuta-ready]="p.estado === 'PENDIENTE_SUPERVISOR'">
                 <div class="permuta-main">
                   <div class="permuta-title">
-                    <strong>{{ p.solicitanteNombre }}</strong> (Día {{ p.diaOrigen }}: <code>{{ p.turnoOrigen }}</code>)
-                    ⇄ <strong>{{ p.receptorNombre }}</strong> (Día {{ p.diaDestino }}: <code>{{ p.turnoDestino }}</code>)
+                    <strong>{{ p.solicitanteNombre }}</strong> (Día {{ p.diaOrigen }}{{ p.mes ? '/' + p.mes : '' }}: <code>{{ p.turnoOrigen }}</code>)
+                    ⇄ <strong>{{ p.receptorNombre }}</strong> (Día {{ p.diaDestino }}{{ p.mes ? '/' + p.mes : '' }}: <code>{{ p.turnoDestino }}</code>)
                   </div>
                   <div class="permuta-meta">
                     Cargo: <b>{{ p.categoria }}</b> • Solicitud: {{ p.fechaSolicitud }}
@@ -205,6 +211,152 @@ import { coincideBusquedaCampos, dividirTerminosBusqueda } from '../../utils/bus
                   <span>🔍 No se encontraron solicitudes que coincidan con los filtros aplicados.</span>
                 } @else {
                   <span>No hay solicitudes de permuta registradas para este servicio.</span>
+                }
+              </div>
+            }
+          </div>
+        </div>
+
+        <!-- Panel 1.5: Reportes de Tiempo Adicional y Llamados DISP (Modelo B) -->
+        <div class="panel-card">
+          <div class="panel-header">
+            <h3>⏰ Reportes de Tiempo Adicional y Llamados DISP</h3>
+            <span class="badge-info">{{ countTiempoPendientes }} pendientes</span>
+          </div>
+
+          <div class="panel-filter-bar">
+            <div class="filter-tabs">
+              <button
+                type="button"
+                class="filter-tab"
+                [class.active]="filtroEstadoTiempo === 'TODAS'"
+                (click)="filtroEstadoTiempo = 'TODAS'">
+                Todas ({{ solicitudesTiempoAdicional.length }})
+              </button>
+              <button
+                type="button"
+                class="filter-tab"
+                [class.active]="filtroEstadoTiempo === 'PENDIENTES'"
+                (click)="filtroEstadoTiempo = 'PENDIENTES'">
+                ⏳ Pendientes ({{ countTiempoPendientes }})
+              </button>
+              <button
+                type="button"
+                class="filter-tab"
+                [class.active]="filtroEstadoTiempo === 'APROBADA'"
+                (click)="filtroEstadoTiempo = 'APROBADA'">
+                ✅ Aprobadas ({{ countTiempoAprobadas }})
+              </button>
+              <button
+                type="button"
+                class="filter-tab"
+                [class.active]="filtroEstadoTiempo === 'RECHAZADA'"
+                (click)="filtroEstadoTiempo = 'RECHAZADA'">
+                ❌ Rechazadas ({{ countTiempoRechazadas }})
+              </button>
+            </div>
+            <div class="search-input-wrap">
+              <input
+                type="text"
+                aria-label="Buscar reportes de tiempo adicional"
+                [(ngModel)]="busquedaTiempo"
+                placeholder="🔍 Buscar colaborador, motivo o soporte..."
+                class="filter-search-input" />
+              @if (busquedaTiempo) {
+                <button
+                  type="button"
+                  aria-label="Limpiar búsqueda de tiempo adicional"
+                  class="btn-clear-search"
+                  (click)="busquedaTiempo = ''">
+                  ✕
+                </button>
+              }
+            </div>
+          </div>
+
+          <div class="permutas-list">
+            @for (st of solicitudesTiempoFiltradas; track st.id) {
+              <div class="permuta-item" [class.permuta-ready]="st.estado === 'PENDIENTE_SUPERVISOR'">
+                <div class="permuta-main">
+                  <div class="permuta-title">
+                    <strong>{{ st.empleadoNombre }}</strong> ({{ st.categoria }}) •
+                    Día {{ st.dia }} ({{ st.fechaIso }}) • Turno base <code>{{ st.turnoBase }}</code>
+                  </div>
+                  <div class="permuta-meta">
+                    @if (st.tipo === 'DISPONIBILIDAD_LLAMADO') {
+                      <span class="badge-concertada">🚨 Llamado DISP</span>
+                    } @else if (st.tipo === 'GUARDIA_EXTRAORDINARIA') {
+                      <span class="badge-concertada">⚡ Guardia Extra</span>
+                    } @else {
+                      <span class="badge-concertada">⏰ Prolongación</span>
+                    }
+                    • Franja: <b>{{ st.horaInicio }}–{{ st.horaFin }}</b>
+                    • Reportadas: <b>+{{ st.horasCalculadas }}h</b>
+                    @if (st.horasAprobadas != null && st.horasAprobadas !== st.horasCalculadas) {
+                      • Aprobadas: <b>+{{ st.horasAprobadas }}h</b>
+                    }
+                  </div>
+                  <div class="permuta-validation">
+                    🏥 <b>[{{ st.motivoCategoria }}]</b> {{ st.motivoDetalle }}
+                    @if (st.soporteClinico) {
+                      <span> • Soporte: <code>{{ st.soporteClinico }}</code></span>
+                    }
+                  </div>
+                  @if (st.observacionSupervisor) {
+                    <div class="permuta-meta">📝 Nota Supervisión: {{ st.observacionSupervisor }} ({{ st.supervisorNombre }})</div>
+                  }
+                  @if (st.motivoRechazo) {
+                    <div class="permuta-reject-reason">⚠️ Motivo rechazo: {{ st.motivoRechazo }}</div>
+                  }
+                </div>
+
+                <div class="permuta-actions">
+                  @if (st.estado === 'PENDIENTE_SUPERVISOR') {
+                    @if (!esColaborador) {
+                      <div class="supervisor-approval-group">
+                        <span class="badge-concertada">⚖️ Modelo B (Meta Mensual)</span>
+                        <div class="btn-group-h">
+                          <button
+                            type="button"
+                            class="btn-approve"
+                            (click)="aprobarTiempoDirecto(st)"
+                            title="Aprobar horas reportadas e integrar al acumulado del mes">
+                            ✔ Aprobar (+{{ st.horasCalculadas }}h)
+                          </button>
+                          <button
+                            type="button"
+                            class="btn-outline"
+                            (click)="abrirModalAjusteTiempo(st)"
+                            title="Ajustar cantidad de horas aprobadas según bitácora asistencial">
+                            ✏️ Ajustar
+                          </button>
+                          <button
+                            type="button"
+                            class="btn-reject"
+                            (click)="abrirModalRechazoTiempo(st)"
+                            title="Rechazar reporte con justificación">
+                            ✕ Rechazar
+                          </button>
+                        </div>
+                      </div>
+                    } @else {
+                      <span class="status-tag status-tag-par">⏳ En revisión por Coordinación</span>
+                    }
+                  } @else if (st.estado === 'APROBADA') {
+                    <span class="status-tag status-tag-ok">
+                      ✅ Aprobada (+{{ st.horasAprobadas ?? st.horasCalculadas }}h ⚡)
+                    </span>
+                  } @else {
+                    <span class="status-tag status-tag-no">❌ Rechazada</span>
+                  }
+                </div>
+              </div>
+            } @empty {
+              <div class="text-muted empty-state-box">
+                @if (busquedaTiempo || filtroEstadoTiempo !== 'TODAS') {
+                  <span>🔍 No se encontraron reportes de tiempo adicional con los filtros aplicados.</span>
+                } @else {
+                  <span>No hay reportes de horas extras o llamados de disponibilidad en este servicio.</span>
                 }
               </div>
             }
@@ -322,6 +474,81 @@ import { coincideBusquedaCampos, dividirTerminosBusqueda } from '../../utils/bus
         </div>
       </div>
     }
+
+    @if (modalTiempoAbierto && solicitudTiempoObjetivo) {
+      <div class="modal-backdrop" (click)="cerrarModalTiempo()">
+        <div
+          class="modal-box"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-tiempo-title"
+          (click)="$event.stopPropagation()">
+          <div class="modal-header">
+            <h3 id="modal-tiempo-title">
+              {{ modoModalTiempo === 'AJUSTAR' ? '✏️ Ajustar y Aprobar Tiempo Adicional' : '✕ Rechazar Reporte de Tiempo Adicional' }}
+            </h3>
+            <button type="button" aria-label="Cerrar diálogo" (click)="cerrarModalTiempo()">✕</button>
+          </div>
+          <div class="modal-body">
+            <p class="dash-modal-desc">
+              <strong>{{ solicitudTiempoObjetivo.empleadoNombre }}</strong> • Día {{ solicitudTiempoObjetivo.dia }} ({{ solicitudTiempoObjetivo.fechaIso }}) •
+              Franja reportada: <b>{{ solicitudTiempoObjetivo.horaInicio }}–{{ solicitudTiempoObjetivo.horaFin }}</b> (+{{ solicitudTiempoObjetivo.horasCalculadas }}h)
+            </p>
+
+            @if (modoModalTiempo === 'AJUSTAR') {
+              <div class="dash-modal-field">
+                <label for="horas-aprobadas-input">Horas reales a aprobar según bitácora asistencial:</label>
+                <input
+                  id="horas-aprobadas-input"
+                  type="number"
+                  step="0.25"
+                  min="0.25"
+                  max="16"
+                  class="filter-search-input"
+                  [(ngModel)]="horasAprobadasModal" />
+              </div>
+              <div class="dash-modal-field">
+                <label for="obs-supervisor-tiempo">Observación de Supervisión (Opcional):</label>
+                <textarea
+                  id="obs-supervisor-tiempo"
+                  class="dash-modal-textarea"
+                  [(ngModel)]="observacionSupervisorModal"
+                  placeholder="Ej: Ajustado según bitácora de quirófano / entrega de guardia..."></textarea>
+              </div>
+              <div class="modal-footer-confirm">
+                <button type="button" class="btn-outline" (click)="cerrarModalTiempo()">Cancelar</button>
+                <button
+                  type="button"
+                  class="btn-approve"
+                  [disabled]="!horasAprobadasModal || horasAprobadasModal <= 0 || horasAprobadasModal > 16"
+                  (click)="confirmarModalTiempo()">
+                  ✔ Confirmar Aprobación (+{{ horasAprobadasModal }}h)
+                </button>
+              </div>
+            } @else {
+              <div class="dash-modal-field">
+                <label for="motivo-rechazo-tiempo">Motivo obligatorio del rechazo:</label>
+                <textarea
+                  id="motivo-rechazo-tiempo"
+                  class="dash-modal-textarea"
+                  [(ngModel)]="motivoRechazoTiempoModal"
+                  placeholder="Describa el motivo clínico o administrativo del rechazo..."></textarea>
+              </div>
+              <div class="modal-footer-confirm">
+                <button type="button" class="btn-outline" (click)="cerrarModalTiempo()">Cancelar</button>
+                <button
+                  type="button"
+                  class="btn-danger"
+                  [disabled]="motivoRechazoTiempoModal.trim().length < 4"
+                  (click)="confirmarModalTiempo()">
+                  Confirmar Rechazo
+                </button>
+              </div>
+            }
+          </div>
+        </div>
+      </div>
+    }
   `,
 })
 export class DashboardSolicitudesComponent {
@@ -334,6 +561,7 @@ export class DashboardSolicitudesComponent {
   @Input() notificacionesCount = 0;
   @Input() esColaborador = false;
   @Input() permutas: PermutaItem[] = [];
+  @Input() solicitudesTiempoAdicional: SolicitudTiempoAdicionalItem[] = [];
   @Input() bitacoraAuditoria: RegistroAuditoria[] = [];
   @Input() sesionActual: SesionUsuarioSso | null = null;
 
@@ -342,10 +570,19 @@ export class DashboardSolicitudesComponent {
   @Output() rechazarPermuta = new EventEmitter<string | { id: string; motivo: string }>();
   @Output() aceptarPropuestaPar = new EventEmitter<string>();
   @Output() rechazarPropuestaPar = new EventEmitter<string>();
+  @Output() resolverTiempoAdicional = new EventEmitter<{
+    id: string;
+    accion: 'APROBAR' | 'RECHAZAR';
+    horasAprobadas?: number;
+    observacionSupervisor?: string;
+    motivoRechazo?: string;
+  }>();
   @Output() refrescarDatos = new EventEmitter<void>();
 
   filtroEstadoPermuta: 'TODAS' | 'PENDIENTES' | 'APROBADA' | 'RECHAZADA' = 'TODAS';
   busquedaPermuta = '';
+  filtroEstadoTiempo: 'TODAS' | 'PENDIENTES' | 'APROBADA' | 'RECHAZADA' = 'TODAS';
+  busquedaTiempo = '';
   busquedaAuditoria = '';
 
   modalRechazoAbierto = false;
@@ -353,11 +590,111 @@ export class DashboardSolicitudesComponent {
   permutaObjetivoId = '';
   motivoRechazoModal = 'Rechazada por necesidades asistenciales del servicio';
 
+  modalTiempoAbierto = false;
+  modoModalTiempo: 'AJUSTAR' | 'RECHAZAR' = 'AJUSTAR';
+  solicitudTiempoObjetivo: SolicitudTiempoAdicionalItem | null = null;
+  horasAprobadasModal = 0;
+  observacionSupervisorModal = '';
+  motivoRechazoTiempoModal = 'No justificado en bitácora asistencial del servicio';
+
   @HostListener('document:keydown.escape')
   onEscapeKey(): void {
     if (this.modalRechazoAbierto) {
       this.cerrarModalRechazo();
     }
+    if (this.modalTiempoAbierto) {
+      this.cerrarModalTiempo();
+    }
+  }
+
+  get countTiempoPendientes(): number {
+    return this.solicitudesTiempoAdicional.filter((s) => s.estado === 'PENDIENTE_SUPERVISOR').length;
+  }
+
+  get countTiempoAprobadas(): number {
+    return this.solicitudesTiempoAdicional.filter((s) => s.estado === 'APROBADA').length;
+  }
+
+  get countTiempoRechazadas(): number {
+    return this.solicitudesTiempoAdicional.filter((s) => s.estado === 'RECHAZADA').length;
+  }
+
+  get solicitudesTiempoFiltradas(): SolicitudTiempoAdicionalItem[] {
+    const terminos = dividirTerminosBusqueda(this.busquedaTiempo);
+    return this.solicitudesTiempoAdicional.filter((s) => {
+      if (this.filtroEstadoTiempo === 'PENDIENTES') {
+        if (s.estado !== 'PENDIENTE_SUPERVISOR') return false;
+      } else if (this.filtroEstadoTiempo !== 'TODAS') {
+        if (s.estado !== this.filtroEstadoTiempo) return false;
+      }
+      if (
+        terminos.length > 0 &&
+        !coincideBusquedaCampos(terminos, [
+          s.empleadoNombre,
+          s.categoria,
+          s.turnoBase,
+          s.motivoCategoria,
+          s.motivoDetalle,
+          s.soporteClinico,
+          s.dia,
+        ])
+      ) {
+        return false;
+      }
+      return true;
+    });
+  }
+
+  aprobarTiempoDirecto(st: SolicitudTiempoAdicionalItem): void {
+    this.resolverTiempoAdicional.emit({
+      id: st.id,
+      accion: 'APROBAR',
+      horasAprobadas: st.horasCalculadas,
+    });
+  }
+
+  abrirModalAjusteTiempo(st: SolicitudTiempoAdicionalItem): void {
+    this.solicitudTiempoObjetivo = st;
+    this.modoModalTiempo = 'AJUSTAR';
+    this.horasAprobadasModal = st.horasCalculadas;
+    this.observacionSupervisorModal = '';
+    this.modalTiempoAbierto = true;
+  }
+
+  abrirModalRechazoTiempo(st: SolicitudTiempoAdicionalItem): void {
+    this.solicitudTiempoObjetivo = st;
+    this.modoModalTiempo = 'RECHAZAR';
+    this.motivoRechazoTiempoModal = 'No justificado en bitácora asistencial del servicio';
+    this.modalTiempoAbierto = true;
+  }
+
+  cerrarModalTiempo(): void {
+    this.modalTiempoAbierto = false;
+    this.solicitudTiempoObjetivo = null;
+  }
+
+  confirmarModalTiempo(): void {
+    if (!this.solicitudTiempoObjetivo) {
+      this.cerrarModalTiempo();
+      return;
+    }
+    if (this.modoModalTiempo === 'AJUSTAR') {
+      this.resolverTiempoAdicional.emit({
+        id: this.solicitudTiempoObjetivo.id,
+        accion: 'APROBAR',
+        horasAprobadas: Number(this.horasAprobadasModal),
+        observacionSupervisor: this.observacionSupervisorModal.trim() || undefined,
+      });
+    } else {
+      this.resolverTiempoAdicional.emit({
+        id: this.solicitudTiempoObjetivo.id,
+        accion: 'RECHAZAR',
+        motivoRechazo:
+          this.motivoRechazoTiempoModal.trim() ||
+          'Rechazada por supervisión asistencial',
+      });
+    }
+    this.cerrarModalTiempo();
   }
 
   get countTodas(): number {

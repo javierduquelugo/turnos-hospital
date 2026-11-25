@@ -13,9 +13,14 @@ import { LiquidacionModule, LiquidacionService, TipoTurnoLiquidableDb, toTurnoLi
 import {
   calcularDescansoEntreTurnosMin,
   DESCANSO_MINIMO_ENTRE_TURNOS_MIN,
+  duracionHorarioMin,
   esCodigoExoneracionContrato,
+  esDomingo,
   esFechaIsoValida,
+  hoyColombiaIso,
+  liquidarTurno,
   normalizarTandasBreak,
+  parseHoraMin,
   r2,
   sumarDiasIso,
   turnoEsLaborado,
@@ -1753,10 +1758,558 @@ export class AuditoriasController {
   }
 }
 
+export interface CrearSolicitudTiempoAdicionalDto {
+  empleadoId: string;
+  servicioId: string;
+  anio: number;
+  mes: number;
+  dia: number;
+  turnoBase?: string;
+  tipo?: 'HORA_EXTRA_PROLONGACION' | 'DISPONIBILIDAD_LLAMADO' | 'GUARDIA_EXTRAORDINARIA';
+  horaInicio: string;
+  horaFin: string;
+  motivoCategoria: string;
+  motivoDetalle: string;
+  soporteClinico?: string;
+}
+
+export interface ResolverTiempoAdicionalDto {
+  accion: 'APROBAR' | 'RECHAZAR';
+  horasAprobadas?: number;
+  observacionSupervisor?: string;
+  motivoRechazo?: string;
+}
+
+@Controller('api/v1/tiempo-adicional')
+export class TiempoAdicionalController {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly liquidacionService: LiquidacionService,
+    private readonly festivosService: FestivosColombiaService
+  ) {}
+
+  private mapearSolicitudDto(s: any) {
+    const fechaIso = s.fecha ? new Date(s.fecha).toISOString().slice(0, 10) : `${s.anio}-${String(s.mes).padStart(2, '0')}-${String(s.dia).padStart(2, '0')}`;
+    return {
+      id: s.id,
+      empleadoId: s.empleadoId,
+      empleadoNombre: s.empleado?.nombre || 'Colaborador',
+      empleadoDocumento: s.empleado?.documento || '',
+      categoria: s.empleado?.categoria?.nombre || 'Asistencial',
+      servicioId: s.servicioId,
+      servicioNombre: s.servicio?.nombre || 'Servicio Asistencial',
+      anio: s.anio,
+      mes: s.mes,
+      dia: s.dia,
+      fechaIso,
+      turnoBase: s.turnoBase || 'L',
+      tipo: s.tipo || 'HORA_EXTRA_PROLONGACION',
+      horaInicio: s.horaInicio,
+      horaFin: s.horaFin,
+      horasCalculadas: Number(s.horasCalculadas) || 0,
+      horasAprobadas: s.horasAprobadas != null ? Number(s.horasAprobadas) : null,
+      hod: Number(s.hod) || 0,
+      hon: Number(s.hon) || 0,
+      hdfd: Number(s.hdfd) || 0,
+      hdfn: Number(s.hdfn) || 0,
+      motivoCategoria: s.motivoCategoria,
+      motivoDetalle: s.motivoDetalle,
+      soporteClinico: s.soporteClinico || null,
+      estado: s.estado,
+      supervisorId: s.supervisorId || null,
+      supervisorNombre: s.supervisorNombre || null,
+      observacionSupervisor: s.observacionSupervisor || null,
+      motivoRechazo: s.motivoRechazo || null,
+      fechaSolicitud: formatearFechaHoraBogota(s.creadoEn),
+      fechaRespuesta: s.fechaRespuesta ? formatearFechaHoraBogota(s.fechaRespuesta) : null,
+    };
+  }
+
+  @Get()
+  async listarSolicitudes(
+    @Query('servicioId') servicioId?: string,
+    @Query('empleadoId') empleadoId?: string,
+    @Query('anio') anioStr?: string,
+    @Query('mes') mesStr?: string,
+    @Query('estado') estado?: string
+  ) {
+    const where: Record<string, any> = {};
+    if (servicioId && servicioId !== 'TODOS') where.servicioId = servicioId;
+    if (empleadoId) where.empleadoId = empleadoId;
+    if (anioStr && Number.isInteger(Number(anioStr))) where.anio = Number(anioStr);
+    if (mesStr && Number.isInteger(Number(mesStr))) where.mes = Number(mesStr);
+    if (estado && ['PENDIENTE_SUPERVISOR', 'APROBADA', 'RECHAZADA'].includes(estado)) {
+      where.estado = estado;
+    }
+
+    const lista =
+      typeof (this.prisma as any).solicitudTiempoAdicional?.findMany === 'function'
+        ? await (this.prisma as any).solicitudTiempoAdicional.findMany({
+            where,
+            include: {
+              empleado: { include: { categoria: true } },
+              servicio: { select: { id: true, nombre: true, codigo: true } },
+            },
+            orderBy: [{ creadoEn: 'desc' }],
+          })
+        : [];
+
+    return lista.map((s: any) => this.mapearSolicitudDto(s));
+  }
+
+  @Post()
+  async crearSolicitud(@Body() dto: CrearSolicitudTiempoAdicionalDto, @Req() req?: any) {
+    const anio = Number(dto?.anio);
+    const mes = Number(dto?.mes);
+    const dia = Number(dto?.dia);
+    if (
+      !Number.isInteger(anio) ||
+      !Number.isInteger(mes) ||
+      !Number.isInteger(dia) ||
+      mes < 1 ||
+      mes > 12
+    ) {
+      throw new BadRequestException('Debe indicar un periodo y día válidos (anio, mes, dia).');
+    }
+    const ultimoDiaMes = new Date(Date.UTC(anio, mes, 0)).getUTCDate();
+    if (dia < 1 || dia > ultimoDiaMes) {
+      throw new BadRequestException(`El día ${dia} está fuera del calendario para ${anio}-${mes}.`);
+    }
+
+    const fechaIso = `${anio}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
+    if (!esFechaIsoValida(fechaIso)) {
+      throw new BadRequestException(`Fecha inválida: ${fechaIso}.`);
+    }
+
+    // Control Temporal: Solo hechos cumplidos (fecha <= hoyColombiaIso)
+    const hoyIso = hoyColombiaIso();
+    if (fechaIso > hoyIso) {
+      throw new ConflictException(
+        `No es posible reportar tiempo adicional sobre fechas futuras (${fechaIso}). Solo se habilita para el día actual o días ya transcurridos.`
+      );
+    }
+
+    const horaInicio = String(dto?.horaInicio || '').trim();
+    const horaFin = String(dto?.horaFin || '').trim();
+    const durMin = duracionHorarioMin(horaInicio, horaFin, false);
+    if (durMin === null || durMin < 15 || durMin > 12 * 60) {
+      throw new BadRequestException(
+        'La franja horaria indicada es inválida. Debe tener una duración entre 15 minutos (0.25h) y 12 horas.'
+      );
+    }
+    const horasCalculadas = r2(durMin / 60);
+
+    const motivoCategoria = String(dto?.motivoCategoria || '').trim().toUpperCase();
+    const motivoDetalle = String(dto?.motivoDetalle || '').trim();
+    if (!motivoCategoria || motivoDetalle.length < 4) {
+      throw new BadRequestException(
+        'Debe seleccionar la categoría del motivo asistencial y detallar la justificación clínica (mínimo 4 caracteres).'
+      );
+    }
+
+    const [empleado, servicio] = await Promise.all([
+      this.prisma.empleado.findFirst({
+        where: { OR: [{ id: dto.empleadoId }, { intranetId: dto.empleadoId }] },
+        include: { categoria: true, empresaContratante: true },
+      }),
+      this.prisma.servicio.findFirst({
+        where: { OR: [{ id: dto.servicioId }, { codigo: dto.servicioId }] },
+      }),
+    ]);
+
+    if (!empleado) {
+      throw new NotFoundException(`Colaborador "${dto.empleadoId}" no encontrado.`);
+    }
+    if (!servicio) {
+      throw new NotFoundException(`Servicio hospitalario "${dto.servicioId}" no encontrado.`);
+    }
+
+    // Si es COLABORADOR autenticado por SSO, solo puede reportar para sí mismo
+    const uSso = req?.usuarioSso;
+    if (
+      uSso?.rol === 'COLABORADOR' &&
+      uSso.empleadoId &&
+      uSso.empleadoId !== empleado.id &&
+      uSso.documento !== empleado.documento
+    ) {
+      throw new ForbiddenException('Solo puedes reportar tiempo adicional para tu propio usuario.');
+    }
+
+    const cuadrante = await this.prisma.cuadrante.findUnique({
+      where: {
+        anio_mes_servicioId: {
+          anio,
+          mes,
+          servicioId: servicio.id,
+        },
+      },
+      select: { id: true, estado: true },
+    });
+
+    if (!cuadrante || cuadrante.estado === 'BORRADOR') {
+      throw new ConflictException(
+        'Solo se puede reportar tiempo adicional sobre cuadrantes en estado PUBLICADO.'
+      );
+    }
+    if (cuadrante.estado === 'CERRADO_NOMINA') {
+      throw new ConflictException(
+        'El cuadrante de este periodo ya se encuentra CERRADO para nómina. No se admiten nuevos reportes.'
+      );
+    }
+
+    const fechaUtc = new Date(`${fechaIso}T00:00:00.000Z`);
+    const [novedadActiva, asigActual, duplicada] = await Promise.all([
+      this.prisma.novedadAusencia.findFirst({
+        where: {
+          empleadoId: empleado.id,
+          fechaInicio: { lte: fechaUtc },
+          fechaFin: { gte: fechaUtc },
+        },
+      }),
+      this.prisma.asignacionTurno.findUnique({
+        where: { empleadoId_fecha: { empleadoId: empleado.id, fecha: fechaUtc } },
+        include: { tipoTurno: true },
+      }),
+      typeof (this.prisma as any).solicitudTiempoAdicional?.findFirst === 'function'
+        ? (this.prisma as any).solicitudTiempoAdicional.findFirst({
+            where: {
+              empleadoId: empleado.id,
+              fecha: fechaUtc,
+              horaInicio,
+              horaFin,
+              estado: { in: ['PENDIENTE_SUPERVISOR', 'APROBADA'] },
+            },
+          })
+        : Promise.resolve(null),
+    ]);
+
+    if (novedadActiva) {
+      throw new ConflictException(
+        `No es posible reportar tiempo adicional en una fecha con novedad de ausencia oficial activa (${novedadActiva.tipo}).`
+      );
+    }
+    if (duplicada) {
+      throw new ConflictException(
+        `Ya existe un reporte activo o aprobado para la franja ${horaInicio}–${horaFin} en el día ${dia}.`
+      );
+    }
+
+    const codActual = normalizarCodigo(asigActual?.tipoTurno?.codigo || dto.turnoBase);
+    if (esCodigoExoneracionContrato(codActual) || asigActual?.tipoTurno?.esAusencia) {
+      throw new ConflictException(
+        `No es posible reportar tiempo adicional sobre un turno de ausencia o exoneración (${codActual}).`
+      );
+    }
+
+    // Validar que si es prolongación sobre turno presencial, no esté contenido dentro del mismo horario ordinario
+    let esProlongacionDiaSiguiente = false;
+    if (
+      asigActual?.tipoTurno &&
+      Number(asigActual.tipoTurno.horasOrdinarias) > 0 &&
+      Number(asigActual.tipoTurno.horasOrdinarias) < 24 &&
+      codActual !== 'DISP'
+    ) {
+      const sBase = parseHoraMin(asigActual.tipoTurno.horaInicio);
+      const durBase = duracionHorarioMin(
+        asigActual.tipoTurno.horaInicio,
+        asigActual.tipoTurno.horaFin,
+        false
+      );
+      const sRep = parseHoraMin(horaInicio);
+      if (sBase !== null && durBase !== null && sRep !== null) {
+        const eBase = sBase + durBase;
+        let sRepAdj = sRep;
+        if (sRepAdj < sBase && eBase > 1440) {
+          sRepAdj += 1440;
+          esProlongacionDiaSiguiente = true;
+        }
+        const eRepAdj = sRepAdj + durMin;
+        if (sRepAdj >= sBase && eRepAdj <= eBase) {
+          throw new ConflictException(
+            `La franja reportada (${horaInicio}–${horaFin}) ya está cubierta dentro del horario ordinario de tu turno ${codActual} (${asigActual.tipoTurno.horaInicio}–${asigActual.tipoTurno.horaFin}). Reporta únicamente el tiempo adicional posterior o previo al turno.`
+          );
+        }
+      }
+    }
+
+    const tipoDeterminado: 'HORA_EXTRA_PROLONGACION' | 'DISPONIBILIDAD_LLAMADO' | 'GUARDIA_EXTRAORDINARIA' =
+      codActual === 'DISP'
+        ? 'DISPONIBILIDAD_LLAMADO'
+        : codActual === 'L' || codActual === 'S'
+          ? 'GUARDIA_EXTRAORDINARIA'
+          : dto.tipo || 'HORA_EXTRA_PROLONGACION';
+
+    await this.festivosService.asegurarAnios([anio, anio + 1]);
+    const reglas = this.liquidacionService.resolverReglasEmpleado(empleado as any);
+    const predDescanso = (iso: string) => esDomingo(iso) || this.festivosService.esFestivo(iso);
+    const fechaLiqIso = esProlongacionDiaSiguiente ? sumarDiasIso(fechaIso, 1) : fechaIso;
+    const liqTramo = liquidarTurno(
+      {
+        codigo: tipoDeterminado,
+        horaInicio,
+        horaFin,
+        horasOrdinarias: horasCalculadas,
+      },
+      fechaLiqIso,
+      predDescanso,
+      reglas
+    );
+
+    const creada = await (this.prisma as any).solicitudTiempoAdicional.create({
+      data: {
+        empleadoId: empleado.id,
+        servicioId: servicio.id,
+        anio,
+        mes,
+        dia,
+        fecha: fechaUtc,
+        turnoBase: codActual,
+        tipo: tipoDeterminado,
+        horaInicio,
+        horaFin,
+        horasCalculadas,
+        hod: liqTramo.hod,
+        hon: liqTramo.hon,
+        hdfd: liqTramo.hdfd,
+        hdfn: liqTramo.hdfn,
+        motivoCategoria,
+        motivoDetalle,
+        soporteClinico: dto.soporteClinico ? String(dto.soporteClinico).trim() : null,
+        estado: 'PENDIENTE_SUPERVISOR',
+      },
+      include: {
+        empleado: { include: { categoria: true } },
+        servicio: { select: { id: true, nombre: true, codigo: true } },
+      },
+    });
+
+    return this.mapearSolicitudDto(creada);
+  }
+
+  @Patch(':id/resolver')
+  async resolverSolicitud(
+    @Param('id') id: string,
+    @Body() dto: ResolverTiempoAdicionalDto,
+    @Req() req?: any
+  ) {
+    const accion = String(dto?.accion || '').trim().toUpperCase();
+    if (accion !== 'APROBAR' && accion !== 'RECHAZAR') {
+      throw new BadRequestException('La acción debe ser APROBAR o RECHAZAR.');
+    }
+
+    const uSso = req?.usuarioSso;
+    const rolEtiqueta = uSso?.rol === 'ADMIN_TH' ? 'Talento Humano' : 'Coordinador';
+    const supervisorNombre =
+      uSso?.nombre && String(uSso.nombre).trim()
+        ? `${String(uSso.nombre).trim()} (${rolEtiqueta})`
+        : `Coordinación Asistencial (${rolEtiqueta})`;
+    const supervisorId = uSso?.empleadoId || uSso?.documento || 'SUPERVISOR';
+
+    return this.prisma.$transaction(
+      async (tx) => {
+        const solicitud = await (tx as any).solicitudTiempoAdicional.findUnique({
+          where: { id },
+          include: {
+            empleado: { include: { categoria: true, empresaContratante: true } },
+            servicio: { select: { id: true, nombre: true, codigo: true } },
+          },
+        });
+
+        if (!solicitud) {
+          throw new NotFoundException('Solicitud de tiempo adicional no encontrada.');
+        }
+        if (solicitud.estado !== 'PENDIENTE_SUPERVISOR') {
+          throw new ConflictException(
+            `Esta solicitud ya fue procesada (estado actual: ${solicitud.estado}).`
+          );
+        }
+
+        // Validar alcance de servicio para Coordinador
+        if (
+          uSso?.rol === 'COORDINADOR' &&
+          Array.isArray(uSso.serviciosCoordinados) &&
+          uSso.serviciosCoordinados.length > 0 &&
+          !uSso.serviciosCoordinados.includes(solicitud.servicioId)
+        ) {
+          throw new ForbiddenException(
+            `No tienes permisos de coordinación sobre el servicio "${solicitud.servicio?.nombre || solicitud.servicioId}".`
+          );
+        }
+
+        const cuadrante = await tx.cuadrante.findUnique({
+          where: {
+            anio_mes_servicioId: {
+              anio: solicitud.anio,
+              mes: solicitud.mes,
+              servicioId: solicitud.servicioId,
+            },
+          },
+          select: { id: true, estado: true },
+        });
+
+        if (cuadrante?.estado === 'CERRADO_NOMINA') {
+          throw new ConflictException(
+            'El cuadrante ya se encuentra CERRADO para nómina. Reabre el periodo para aprobar o modificar reportes.'
+          );
+        }
+
+        if (accion === 'RECHAZAR') {
+          const motivoRechazo = String(dto?.motivoRechazo || '').trim();
+          if (motivoRechazo.length < 4) {
+            throw new BadRequestException(
+              'Debe indicar el motivo del rechazo (mínimo 4 caracteres).'
+            );
+          }
+
+          const rechazada = await (tx as any).solicitudTiempoAdicional.update({
+            where: { id },
+            data: {
+              estado: 'RECHAZADA',
+              supervisorId,
+              supervisorNombre,
+              motivoRechazo,
+              fechaRespuesta: new Date(),
+            },
+            include: {
+              empleado: { include: { categoria: true } },
+              servicio: { select: { id: true, nombre: true, codigo: true } },
+            },
+          });
+
+          return this.mapearSolicitudDto(rechazada);
+        }
+
+        // Acción: APROBAR (con posibilidad de ajuste de horas por el supervisor)
+        const horasCalc = Number(solicitud.horasCalculadas) || 0;
+        const horasAprobadas =
+          dto.horasAprobadas !== undefined && dto.horasAprobadas !== null
+            ? r2(Number(dto.horasAprobadas))
+            : horasCalc;
+
+        if (!Number.isFinite(horasAprobadas) || horasAprobadas <= 0 || horasAprobadas > 16) {
+          throw new BadRequestException(
+            'Las horas aprobadas deben ser mayores a 0 y máximo 16 horas.'
+          );
+        }
+
+        const sumaPrevia =
+          (Number(solicitud.hod) || 0) +
+          (Number(solicitud.hon) || 0) +
+          (Number(solicitud.hdfd) || 0) +
+          (Number(solicitud.hdfn) || 0);
+
+        let liqBase = {
+          hod: Number(solicitud.hod) || 0,
+          hon: Number(solicitud.hon) || 0,
+          hdfd: Number(solicitud.hdfd) || 0,
+          hdfn: Number(solicitud.hdfn) || 0,
+        };
+        if (sumaPrevia <= 0) {
+          await this.festivosService.asegurarAnios([solicitud.anio, solicitud.anio + 1]);
+          const fechaIso = new Date(solicitud.fecha).toISOString().slice(0, 10);
+          const reglas = this.liquidacionService.resolverReglasEmpleado(solicitud.empleado as any);
+          const predDescanso = (iso: string) =>
+            esDomingo(iso) || this.festivosService.esFestivo(iso);
+          liqBase = liquidarTurno(
+            {
+              codigo: solicitud.tipo,
+              horaInicio: solicitud.horaInicio,
+              horaFin: solicitud.horaFin,
+              horasOrdinarias: horasCalc,
+            },
+            fechaIso,
+            predDescanso,
+            reglas
+          );
+        }
+
+        const factorEscala = horasCalc > 0 ? horasAprobadas / horasCalc : 1;
+        const hod = r2(liqBase.hod * factorEscala);
+        const hon = r2(liqBase.hon * factorEscala);
+        const hdfd = r2(liqBase.hdfd * factorEscala);
+        const hdfn = r2(liqBase.hdfn * factorEscala);
+
+        const actualizada = await (tx as any).solicitudTiempoAdicional.update({
+          where: { id },
+          data: {
+            estado: 'APROBADA',
+            horasAprobadas,
+            hod,
+            hon,
+            hdfd,
+            hdfn,
+            supervisorId,
+            supervisorNombre,
+            observacionSupervisor: dto.observacionSupervisor
+              ? String(dto.observacionSupervisor).trim()
+              : null,
+            fechaRespuesta: new Date(),
+          },
+          include: {
+            empleado: { include: { categoria: true } },
+            servicio: { select: { id: true, nombre: true, codigo: true } },
+          },
+        });
+
+        const etiquetaTipo =
+          solicitud.tipo === 'DISPONIBILIDAD_LLAMADO'
+            ? 'Llamado en Disponibilidad (DISP)'
+            : solicitud.tipo === 'GUARDIA_EXTRAORDINARIA'
+              ? 'Guardia Extraordinaria'
+              : 'Prolongación de Turno';
+
+        const notaAjuste =
+          Math.abs(horasAprobadas - horasCalc) > 0.01
+            ? ` (Ajustado por supervisión de ${horasCalc}h a ${horasAprobadas}h)`
+            : '';
+
+        await tx.auditoriaCambio.create({
+          data: {
+            servicioId: solicitud.servicioId,
+            empleadoId: solicitud.empleadoId,
+            actorId: supervisorNombre,
+            tipoAccion: 'TIEMPO_ADICIONAL',
+            turnoAnterior: solicitud.turnoBase,
+            turnoNuevo: `${solicitud.turnoBase} (+${horasAprobadas}h ⚡)`,
+            justificacion: `${etiquetaTipo} aprobada: ${solicitud.horaInicio}–${solicitud.horaFin} (+${horasAprobadas}h)${notaAjuste}. Motivo: [${solicitud.motivoCategoria}] ${solicitud.motivoDetalle}${solicitud.soporteClinico ? ' — Soporte: ' + solicitud.soporteClinico : ''}`,
+            fechaObjetivo: solicitud.fecha,
+            faseCuadrante: 'PUBLICADO',
+            origenAccion: solicitud.tipo,
+            esDetalleLote: false,
+          },
+        });
+
+        // Reconsolidar saldos del Banco de Horas en el servicio y servicio base del colaborador
+        const serviciosImpactados = new Set<string>([solicitud.servicioId]);
+        if (
+          solicitud.empleado?.servicioBaseId &&
+          solicitud.empleado.servicioBaseId !== solicitud.servicioId
+        ) {
+          serviciosImpactados.add(solicitud.empleado.servicioBaseId);
+        }
+        for (const srvIdImp of serviciosImpactados) {
+          await this.liquidacionService.consolidarSaldosBancoServicio(
+            srvIdImp,
+            solicitud.anio,
+            solicitud.mes,
+            new Map(),
+            true,
+            tx
+          );
+        }
+
+        return this.mapearSolicitudDto(actualizada);
+      },
+      { timeout: 20000 }
+    );
+  }
+}
+
 @Module({
   imports: [FestivosModule, LiquidacionModule],
   controllers: [
     PermutasController,
+    TiempoAdicionalController,
     IntranetIntegrationController,
     CalendarioIcalController,
     AuditoriasController,

@@ -460,7 +460,7 @@ export class LiquidacionService implements OnModuleInit {
     if (empleados.length === 0) return;
 
     const empIds = empleados.map((e) => e.id);
-    const [asignacionesMes, saldosPreviosDb] = await Promise.all([
+    const [asignacionesMes, saldosPreviosDb, solicitudesAprobadasMes] = await Promise.all([
       db.asignacionTurno.findMany({
         where: {
           empleadoId: { in: empIds },
@@ -477,6 +477,16 @@ export class LiquidacionService implements OnModuleInit {
         orderBy: [{ anio: 'desc' }, { mes: 'desc' }],
         select: { empleadoId: true, saldoFinalAcumulado: true },
       }),
+      typeof (db as any).solicitudTiempoAdicional?.findMany === 'function'
+        ? (db as any).solicitudTiempoAdicional.findMany({
+            where: {
+              empleadoId: { in: empIds },
+              anio,
+              mes,
+              estado: 'APROBADA',
+            },
+          })
+        : Promise.resolve([]),
     ]);
 
     const mapaPrevDb = new Map<string, number>();
@@ -491,6 +501,14 @@ export class LiquidacionService implements OnModuleInit {
       const lista = asigsPorEmp.get(a.empleadoId) || [];
       lista.push(a);
       asigsPorEmp.set(a.empleadoId, lista);
+    }
+
+    const horasAdicPorEmp = new Map<string, number>();
+    for (const sol of Array.isArray(solicitudesAprobadasMes) ? solicitudesAprobadasMes : []) {
+      const hEff = Number(sol.horasAprobadas ?? sol.horasCalculadas) || 0;
+      if (hEff > 0) {
+        horasAdicPorEmp.set(sol.empleadoId, r2((horasAdicPorEmp.get(sol.empleadoId) || 0) + hEff));
+      }
     }
 
     const upserts = empleados.map((emp) => {
@@ -520,7 +538,8 @@ export class LiquidacionService implements OnModuleInit {
         });
       }
       horasAmortizadasComp = r2(horasAmortizadasComp);
-      const horasTrabajadas = liquidarPeriodo(items, pred, reglas).total;
+      const horasAdicionalesEmp = horasAdicPorEmp.get(emp.id) || 0;
+      const horasTrabajadas = r2(liquidarPeriodo(items, pred, reglas).total + horasAdicionalesEmp);
       const diasHabilesProrrateados = contarDiasHabilesProrrateados(items, predFest);
       const meta = calcularMetaMensualPorDiasHabiles(
         reglas.horasSemanalesContrato,
@@ -719,23 +738,43 @@ export class LiquidacionService implements OnModuleInit {
     });
 
     const empIds = empleados.map((e) => e.id);
-    const asignacionesVentana =
+    const [asignacionesVentana, solicitudesAprobadasPeriodo] =
       empIds.length > 0
-        ? await this.prisma.asignacionTurno.findMany({
-            where: {
-              empleadoId: { in: empIds },
-              fecha: { gte: primerDiaBorde, lte: ultimoDia },
-            },
-            include: { tipoTurno: true },
-            orderBy: { fecha: 'asc' },
-          })
-        : [];
+        ? await Promise.all([
+            this.prisma.asignacionTurno.findMany({
+              where: {
+                empleadoId: { in: empIds },
+                fecha: { gte: primerDiaBorde, lte: ultimoDia },
+              },
+              include: { tipoTurno: true },
+              orderBy: { fecha: 'asc' },
+            }),
+            typeof (this.prisma as any).solicitudTiempoAdicional?.findMany === 'function'
+              ? (this.prisma as any).solicitudTiempoAdicional.findMany({
+                  where: {
+                    empleadoId: { in: empIds },
+                    anio,
+                    mes,
+                    estado: 'APROBADA',
+                    ...(servicioId ? { servicioId } : {}),
+                  },
+                })
+              : Promise.resolve([]),
+          ])
+        : [[], []];
 
     const porEmpVentana = new Map<string, typeof asignacionesVentana>();
     for (const a of asignacionesVentana) {
       const lista = porEmpVentana.get(a.empleadoId) || [];
       lista.push(a);
       porEmpVentana.set(a.empleadoId, lista);
+    }
+
+    const adicPorEmp = new Map<string, any[]>();
+    for (const sol of Array.isArray(solicitudesAprobadasPeriodo) ? solicitudesAprobadasPeriodo : []) {
+      const lista = adicPorEmp.get(sol.empleadoId) || [];
+      lista.push(sol);
+      adicPorEmp.set(sol.empleadoId, lista);
     }
 
     let pendientesRecalculo = 0;
@@ -800,6 +839,36 @@ export class LiquidacionService implements OnModuleInit {
       }
 
       const liq = liquidarPeriodo(itemsMes, pred, reglas);
+      const listaAdicEmp = adicPorEmp.get(emp.id) || [];
+      let adicHod = 0;
+      let adicHon = 0;
+      let adicHdfd = 0;
+      let adicHdfn = 0;
+      let adicTotal = 0;
+
+      for (const sol of listaAdicEmp) {
+        const hEff = Number(sol.horasAprobadas ?? sol.horasCalculadas) || 0;
+        if (hEff <= 0) continue;
+        adicHod = r2(adicHod + (Number(sol.hod) || 0));
+        adicHon = r2(adicHon + (Number(sol.hon) || 0));
+        adicHdfd = r2(adicHdfd + (Number(sol.hdfd) || 0));
+        adicHdfn = r2(adicHdfn + (Number(sol.hdfn) || 0));
+        adicTotal = r2(adicTotal + hEff);
+        const fechaSolIso = sol.fecha
+          ? new Date(sol.fecha).toISOString().substring(0, 10)
+          : `${sol.anio}-${String(sol.mes).padStart(2, '0')}-${String(sol.dia).padStart(2, '0')}`;
+        itemsVentanaSemanal.push({
+          fechaIso: fechaSolIso,
+          codigo: sol.tipo || 'EXTRA',
+          turno: {
+            codigo: sol.tipo || 'EXTRA',
+            horasOrdinarias: hEff,
+            horasDiurnas: hEff,
+            horasNocturnas: 0,
+          },
+        });
+      }
+
       const semanalRaw = evaluarJornadaSemanalPeriodo(itemsVentanaSemanal, reglas);
       const semanasDelMes = semanalRaw.semanas.filter((s) => s.semanaFinIso >= primerDiaIso);
       const promediosDelMes = semanalRaw.promedios3SemanasExcedidos.filter(
@@ -828,6 +897,25 @@ export class LiquidacionService implements OnModuleInit {
       );
       const normativaColaborador = resumenNormativoPeriodo(anio, mes, reglas);
 
+      // Modelo B (Meta Mensual / Bolsa de Horas):
+      // El tiempo adicional primero nivela déficit frente a meta.horasContratadasEfectivas;
+      // todo lo que supere la meta mensual se clasifica como Horas Extras con recargos CST.
+      const horasTrabajadasTotales = r2(liq.total + adicTotal);
+      const excesoMes = Math.max(0, r2(horasTrabajadasTotales - meta.horasContratadasEfectivas));
+      const horasAdicionalesExtras = Math.min(adicTotal, excesoMes);
+      const horasAdicionalesNivelacion = r2(adicTotal - horasAdicionalesExtras);
+      const ratioNivel = adicTotal > 0 ? horasAdicionalesNivelacion / adicTotal : 0;
+      const ratioExtra = adicTotal > 0 ? horasAdicionalesExtras / adicTotal : 0;
+
+      const hodFinal = r2(liq.hod + adicHod * ratioNivel);
+      const honFinal = r2(liq.hon + adicHon * ratioNivel);
+      const hdfdFinal = r2(liq.hdfd + adicHdfd * ratioNivel);
+      const hdfnFinal = r2(liq.hdfn + adicHdfn * ratioNivel);
+      const hedFinal = r2(adicHod * ratioExtra);
+      const henFinal = r2(adicHon * ratioExtra);
+      const hefdFinal = r2(adicHdfd * ratioExtra);
+      const hefnFinal = r2(adicHdfn * ratioExtra);
+
       return {
         empleadoId: emp.id,
         documento: emp.documento,
@@ -851,13 +939,17 @@ export class LiquidacionService implements OnModuleInit {
         horasContratadasNominales: meta.horasContratadasNominales,
         horasExoneradas: meta.horasExoneradas,
         horasContratadasEfectivas: meta.horasContratadasEfectivas,
-        hod: liq.hod,
-        hon: liq.hon,
-        hdfd: liq.hdfd,
-        hdfn: liq.hdfn,
-        hed: 0,
-        hen: 0,
-        horasTrabajadas: liq.total,
+        hod: hodFinal,
+        hon: honFinal,
+        hdfd: hdfdFinal,
+        hdfn: hdfnFinal,
+        hed: hedFinal,
+        hen: henFinal,
+        hefd: hefdFinal,
+        hefn: hefnFinal,
+        horasAdicionalesAprobadas: adicTotal,
+        horasExtrasTotales: r2(hedFinal + henFinal + hefdFinal + hefnFinal),
+        horasTrabajadas: horasTrabajadasTotales,
         diasDescansoLaborados: liq.diasDescansoLaborados,
         fechasDescansoLaboradas: liq.fechasDescansoLaboradas,
         domingosLaborados: liq.domingosLaborados,

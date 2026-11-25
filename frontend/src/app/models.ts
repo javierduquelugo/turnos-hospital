@@ -228,6 +228,20 @@ export interface EmpleadoHospital {
   ultimoTurnoMesPrevio: CodigoTurno;
 }
 
+export interface TramoTiempoAdicionalCelda {
+  id: string;
+  tipo: 'HORA_EXTRA_PROLONGACION' | 'DISPONIBILIDAD_LLAMADO' | 'GUARDIA_EXTRAORDINARIA' | string;
+  horaInicio: string;
+  horaFin: string;
+  horasAprobadas: number;
+  hod: number;
+  hon: number;
+  hdfd: number;
+  hdfn: number;
+  motivoCategoria: string;
+  motivoDetalle: string;
+}
+
 export interface CeldaAsignacion {
   codigo: CodigoTurno;
   previsto?: CodigoTurno;
@@ -238,6 +252,43 @@ export interface CeldaAsignacion {
   breakTandaOrden?: number;
   breakInicio?: string;
   breakFin?: string;
+  horasAdicionalesAprobadas?: number;
+  solicitudesPendientesCount?: number;
+  tramosAdicionales?: TramoTiempoAdicionalCelda[];
+}
+
+export interface SolicitudTiempoAdicionalItem {
+  id: string;
+  empleadoId: string;
+  empleadoNombre: string;
+  empleadoDocumento?: string;
+  categoria: string;
+  servicioId: string;
+  servicioNombre: string;
+  anio: number;
+  mes: number;
+  dia: number;
+  fechaIso: string;
+  turnoBase: CodigoTurno;
+  tipo: 'HORA_EXTRA_PROLONGACION' | 'DISPONIBILIDAD_LLAMADO' | 'GUARDIA_EXTRAORDINARIA';
+  horaInicio: string;
+  horaFin: string;
+  horasCalculadas: number;
+  horasAprobadas?: number | null;
+  hod: number;
+  hon: number;
+  hdfd: number;
+  hdfn: number;
+  motivoCategoria: string;
+  motivoDetalle: string;
+  soporteClinico?: string | null;
+  estado: 'PENDIENTE_SUPERVISOR' | 'APROBADA' | 'RECHAZADA';
+  supervisorId?: string | null;
+  supervisorNombre?: string | null;
+  observacionSupervisor?: string | null;
+  motivoRechazo?: string | null;
+  fechaSolicitud: string;
+  fechaRespuesta?: string | null;
 }
 
 export interface PermutaItem {

@@ -504,7 +504,7 @@ export class CuadrantesController {
   async obtenerEstadoGlobal(@Query('anio') anioStr?: string) {
     const anio = Number(anioStr) || Number(hoyColombiaIso().substring(0, 4));
 
-    const [cuadrantes, asignaciones, saldos] = await Promise.all([
+    const [cuadrantes, asignaciones, saldos, solicitudesTiempo] = await Promise.all([
       this.prisma.cuadrante.findMany({
         where: {
           OR: [{ anio }, { anio: anio - 1, mes: 12 }],
@@ -552,6 +552,15 @@ export class CuadrantesController {
           saldoFinalAcumulado: true,
         },
       }),
+      typeof (this.prisma as any).solicitudTiempoAdicional?.findMany === 'function'
+        ? (this.prisma as any).solicitudTiempoAdicional.findMany({
+            where: {
+              OR: [{ anio }, { anio: anio - 1, mes: 12 }],
+              estado: { in: ['PENDIENTE_SUPERVISOR', 'APROBADA'] },
+            },
+            orderBy: { creadoEn: 'asc' },
+          })
+        : Promise.resolve([]),
     ]);
 
     const estados: Record<string, string> = {};
@@ -576,6 +585,21 @@ export class CuadrantesController {
             breakTandaOrden?: number;
             breakInicio?: string;
             breakFin?: string;
+            horasAdicionalesAprobadas?: number;
+            solicitudesPendientesCount?: number;
+            tramosAdicionales?: Array<{
+              id: string;
+              tipo: string;
+              horaInicio: string;
+              horaFin: string;
+              horasAprobadas: number;
+              hod: number;
+              hon: number;
+              hdfd: number;
+              hdfn: number;
+              motivoCategoria: string;
+              motivoDetalle: string;
+            }>;
           }
         >
       >
@@ -617,6 +641,42 @@ export class CuadrantesController {
           ? { breakFin: (a as any).breakFin }
           : {}),
       };
+    }
+
+    for (const s of Array.isArray(solicitudesTiempo) ? solicitudesTiempo : []) {
+      const periodoKey = `${s.anio}-${s.mes}`;
+      if (!asignacionesPorPeriodo[periodoKey]) {
+        asignacionesPorPeriodo[periodoKey] = {};
+      }
+      if (!asignacionesPorPeriodo[periodoKey][s.empleadoId]) {
+        asignacionesPorPeriodo[periodoKey][s.empleadoId] = {};
+      }
+      if (!asignacionesPorPeriodo[periodoKey][s.empleadoId][s.dia]) {
+        asignacionesPorPeriodo[periodoKey][s.empleadoId][s.dia] = {
+          codigo: s.turnoBase && s.turnoBase !== CODIGO_CELDA_VACIA_DB ? s.turnoBase : '',
+        };
+      }
+      const celda = asignacionesPorPeriodo[periodoKey][s.empleadoId][s.dia];
+      if (s.estado === 'APROBADA') {
+        const horasEff = r2(Number(s.horasAprobadas ?? s.horasCalculadas) || 0);
+        celda.horasAdicionalesAprobadas = r2((celda.horasAdicionalesAprobadas || 0) + horasEff);
+        if (!celda.tramosAdicionales) celda.tramosAdicionales = [];
+        celda.tramosAdicionales.push({
+          id: s.id,
+          tipo: s.tipo,
+          horaInicio: s.horaInicio,
+          horaFin: s.horaFin,
+          horasAprobadas: horasEff,
+          hod: Number(s.hod) || 0,
+          hon: Number(s.hon) || 0,
+          hdfd: Number(s.hdfd) || 0,
+          hdfn: Number(s.hdfn) || 0,
+          motivoCategoria: s.motivoCategoria,
+          motivoDetalle: s.motivoDetalle,
+        });
+      } else if (s.estado === 'PENDIENTE_SUPERVISOR') {
+        celda.solicitudesPendientesCount = (celda.solicitudesPendientesCount || 0) + 1;
+      }
     }
 
     const saldosConsolidados: Record<string, number> = {};

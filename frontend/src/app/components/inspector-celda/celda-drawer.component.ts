@@ -41,6 +41,7 @@ import {
   HorasLiquidadas,
   liquidarTurno,
   obtenerHorasAmortizacionTurno,
+  r2,
 } from '../../shared/liquidacion-horas';
 import { TurnosApiService } from '../../turnos-api.service';
 import { CuadranteStore, ResumenTandasBreakDia } from '../../stores/cuadrante.store';
@@ -198,6 +199,15 @@ import { CuadranteStore, ResumenTandasBreakDia } from '../../stores/cuadrante.st
               @if (horasAmortizacionComp > 0) {
                 <div class="drawer-comp-amort">
                   🏦 Compensatorio: amortiza <strong>-{{ horasAmortizacionComp }}h</strong> del Banco de Horas.
+                </div>
+              }
+              @if (celda?.tramosAdicionales && celda!.tramosAdicionales!.length > 0) {
+                <div class="drawer-comp-amort">
+                  @for (tr of celda!.tramosAdicionales!; track tr.id) {
+                    <div>
+                      ⚡ <strong>+{{ tr.horasAprobadas }}h aprobadas</strong> ({{ tr.horaInicio }}–{{ tr.horaFin }}) · [{{ tr.motivoCategoria }}] {{ tr.motivoDetalle }}
+                    </div>
+                  }
                 </div>
               }
             </div>
@@ -976,24 +986,41 @@ export class CeldaDrawerComponent implements OnInit, OnChanges {
 
   get liquidacionDia(): HorasLiquidadas {
     const fechaIso = this.fechaIsoActual;
-    if (!this.cfgActual || !fechaIso) {
-      return { hod: 0, hon: 0, hdfd: 0, hdfn: 0, total: 0 };
+    let base: HorasLiquidadas = { hod: 0, hon: 0, hdfd: 0, hdfn: 0, total: 0 };
+    if (this.cfgActual && fechaIso) {
+      const reglas = reglasEmpresaDeEmpleado(this.empleado);
+      const turnoEff =
+        this.celda?.breakInicio || this.celda?.breakFin
+          ? {
+              ...this.cfgActual,
+              breakInicio: this.celda.breakInicio ?? null,
+              breakFin: this.celda.breakFin ?? null,
+            }
+          : this.cfgActual;
+      base = liquidarTurno(
+        turnoEff,
+        fechaIso,
+        predicadoDescansoObligatorio(),
+        reglas
+      );
     }
-    const reglas = reglasEmpresaDeEmpleado(this.empleado);
-    const turnoEff =
-      this.celda?.breakInicio || this.celda?.breakFin
-        ? {
-            ...this.cfgActual,
-            breakInicio: this.celda.breakInicio ?? null,
-            breakFin: this.celda.breakFin ?? null,
-          }
-        : this.cfgActual;
-    return liquidarTurno(
-      turnoEff,
-      fechaIso,
-      predicadoDescansoObligatorio(),
-      reglas
-    );
+    const tramos = this.celda?.tramosAdicionales;
+    if (Array.isArray(tramos) && tramos.length > 0) {
+      let hod = base.hod;
+      let hon = base.hon;
+      let hdfd = base.hdfd;
+      let hdfn = base.hdfn;
+      let total = base.total;
+      for (const tr of tramos) {
+        hod = r2(hod + (Number(tr.hod) || 0));
+        hon = r2(hon + (Number(tr.hon) || 0));
+        hdfd = r2(hdfd + (Number(tr.hdfd) || 0));
+        hdfn = r2(hdfn + (Number(tr.hdfn) || 0));
+        total = r2(total + (Number(tr.horasAprobadas) || 0));
+      }
+      return { hod, hon, hdfd, hdfn, total };
+    }
+    return base;
   }
 
   get infoBreakActual(): {
@@ -1263,6 +1290,12 @@ export class CeldaDrawerComponent implements OnInit, OnChanges {
         return 'Break';
       case 'BALANCEAR_BREAKS':
         return 'Balanceo Breaks';
+      case 'HORA_EXTRA_PROLONGACION':
+        return 'Hora Extra';
+      case 'DISPONIBILIDAD_LLAMADO':
+        return 'Llamado DISP';
+      case 'GUARDIA_EXTRAORDINARIA':
+        return 'Guardia Extra';
       default:
         return 'Manual';
     }

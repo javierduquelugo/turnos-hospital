@@ -35,12 +35,15 @@ import {
   styleUrl: './planificador-cuadrante.component.css',
   template: `
     <section class="toolbar-controls toolbar-eje3">
-      <!-- CARRIL IZQUIERDO (FIJO): SERVICIO Y PERIODO -->
+      <!-- CARRIL IZQUIERDO: SERVICIO ACTIVO -->
       <div class="toolbar-zone toolbar-zone-context">
-        <div class="control-item" title="Servicio hospitalario activo (agrupado por Macroproceso del Mapa de Procesos)">
+        <div
+          class="control-item control-item-servicio"
+          [title]="servicioActual ? ('Servicio hospitalario activo: ' + servicioActual.nombre + ' (' + servicioActual.codigo + ')') : 'Servicio hospitalario activo (agrupado por Macroproceso del Mapa de Procesos)'">
           <select
             class="select-context select-servicio"
             aria-label="Seleccionar servicio hospitalario"
+            [title]="servicioActual ? (servicioActual.nombre + ' (' + servicioActual.codigo + ')') : 'Seleccionar servicio hospitalario'"
             [ngModel]="servicioSeleccionadoId"
             (ngModelChange)="cambiarServicio.emit($event)">
             @for (grupo of serviciosAgrupadosPorMacroproceso; track grupo.macro.codigo) {
@@ -52,96 +55,82 @@ import {
             }
           </select>
         </div>
+      </div>
 
-        <div class="stepper-cluster">
-          <div class="month-stepper month-stepper-toolbar" title="Navegar entre meses y años">
+      <!-- CARRIL CENTRAL: PERIODO / FECHA SIEMPRE EN EL CENTRO -->
+      <div class="stepper-cluster toolbar-zone-period">
+        <div class="month-stepper month-stepper-toolbar" title="Navegar entre meses y años">
+          <button
+            type="button"
+            class="btn-nav-month"
+            aria-label="Ir al mes anterior"
+            (click)="navegarMes.emit(-1)"
+            title="Ir al mes anterior">
+            ◀
+          </button>
+          <span
+            class="period-compact-display"
+            [class.is-published]="estadoCuadrante === 'PUBLICADO'"
+            [class.is-locked]="estadoCuadrante === 'CERRADO_NOMINA'"
+            [attr.aria-label]="'Periodo de planificación: ' + periodoAbreviado"
+            [title]="tituloPeriodoStepper">
+            {{ periodoAbreviado }}
+          </span>
+          <button
+            type="button"
+            class="btn-nav-month"
+            aria-label="Ir al mes siguiente"
+            (click)="navegarMes.emit(1)"
+            title="Ir al mes siguiente">
+            ▶
+          </button>
+          @if (!esPeriodoActual) {
             <button
               type="button"
-              class="btn-nav-month"
-              aria-label="Ir al mes anterior"
-              (click)="navegarMes.emit(-1)"
-              title="Ir al mes anterior">
-              ◀
+              class="btn-hoy-period"
+              (click)="irAMesActual.emit()"
+              title="Volver al mes y año actual">
+              Hoy
             </button>
-            <span
-              class="period-compact-display"
-              [class.is-published]="estadoCuadrante === 'PUBLICADO'"
-              [class.is-locked]="estadoCuadrante === 'CERRADO_NOMINA'"
-              [attr.aria-label]="'Periodo de planificación: ' + periodoAbreviado"
-              [title]="tituloPeriodoStepper">
-              {{ periodoAbreviado }}
-            </span>
-            <button
-              type="button"
-              class="btn-nav-month"
-              aria-label="Ir al mes siguiente"
-              (click)="navegarMes.emit(1)"
-              title="Ir al mes siguiente">
-              ▶
-            </button>
-            @if (!esPeriodoActual) {
-              <button
-                type="button"
-                class="btn-hoy-period"
-                (click)="irAMesActual.emit()"
-                title="Volver al mes y año actual">
-                Hoy
-              </button>
-            }
-          </div>
-          @if (estadoCuadrante === 'PUBLICADO') {
-            <span class="stepper-pill-status pill-published">Publicado</span>
-          } @else if (estadoCuadrante === 'CERRADO_NOMINA') {
-            <span class="stepper-pill-status pill-locked">Cerrado</span>
           }
         </div>
+        @if (estadoCuadrante === 'PUBLICADO') {
+          <span class="stepper-pill-status pill-published">Publicado</span>
+        } @else if (estadoCuadrante === 'CERRADO_NOMINA') {
+          <span class="stepper-pill-status pill-locked">Cerrado</span>
+        }
       </div>
 
-      <!-- CARRIL CENTRAL (FIJO): CARGO Y HERRAMIENTAS DE EDICIÓN ASISTIDA -->
-      <div class="toolbar-zone toolbar-zone-tools">
-        <div class="control-item" title="Filtrar cuadrante por cargo / especialidad">
-          <select
-            class="select-context select-cargo"
-            aria-label="Filtrar cuadrante por cargo"
-            [ngModel]="filtroCategoriaActiva"
-            (ngModelChange)="cambiarFiltroCategoria.emit($event)">
-            <option value="TODAS">Todos los cargos ({{ categoriasEnServicioActual.length }})</option>
-            @for (cat of categoriasEnServicioActual; track cat) {
-              <option [value]="cat">{{ cat }}</option>
-            }
-          </select>
+      <!-- CARRIL DERECHO: HERRAMIENTAS DE EDICIÓN Y GOBERNANZA -->
+      <div class="toolbar-zone-right">
+        <div class="toolbar-zone toolbar-zone-tools">
+          <!-- Asistente y Acciones de Cuadrante -->
+          <button
+            type="button"
+            class="btn-tool btn-tool-wizard"
+            (click)="ejecutarAutocompletarHuecos.emit()"
+            title="Autocompletar turnos faltantes respetando descansos y normativa colombiana">
+            ✨ Auto
+          </button>
+
+          <button
+            type="button"
+            class="btn-tool btn-tool-apoyo"
+            (click)="abrirModalRotacion.emit()"
+            title="Solicitar o traer personal de apoyo homólogo de otros servicios">
+            🔄 Apoyo
+          </button>
+
+          <button
+            type="button"
+            class="btn-tool btn-tool-limpiar"
+            (click)="limpiarCuadranteCompleto.emit()"
+            title="Borra todos los turnos para armar a mano (conserva VAC/INC)">
+            🧹 Limpiar
+          </button>
         </div>
 
-        <div class="tools-micro-divider"></div>
-
-        <!-- Asistente y Acciones de Cuadrante -->
-        <button
-          type="button"
-          class="btn-tool btn-tool-wizard"
-          (click)="ejecutarAutocompletarHuecos.emit()"
-          title="Autocompletar turnos faltantes respetando descansos y normativa colombiana">
-          ✨ Auto
-        </button>
-
-        <button
-          type="button"
-          class="btn-tool btn-tool-apoyo"
-          (click)="abrirModalRotacion.emit()"
-          title="Solicitar o traer personal de apoyo homólogo de otros servicios">
-          🔄 Apoyo
-        </button>
-
-        <button
-          type="button"
-          class="btn-tool btn-tool-limpiar"
-          (click)="limpiarCuadranteCompleto.emit()"
-          title="Borra todos los turnos para armar a mano (conserva VAC/INC)">
-          🧹 Limpiar
-        </button>
-      </div>
-
-      <!-- CARRIL DERECHO (FIJO): GOBERNANZA Y ACCIÓN PRINCIPAL -->
-      <div class="toolbar-zone toolbar-zone-governance">
+        <div class="toolbar-zone toolbar-zone-governance">
         <button
           type="button"
           class="intranet-status-pill"
@@ -205,6 +194,7 @@ import {
             🔓 Reabrir Cuadro
           }
         </button>
+        </div>
       </div>
     </section>
 
@@ -757,6 +747,13 @@ import {
                       @if (celda?.esRotacion && celda?.codigo && celda?.codigo !== 'L') {
                         <span class="rotacion-mini-tag" title="Turno de apoyo ejecutado en este servicio">🔄</span>
                       }
+                      @if ((celda?.horasAdicionalesAprobadas || 0) > 0) {
+                        <span class="extra-mini-tag" [title]="'+' + celda?.horasAdicionalesAprobadas + 'h adicionales aprobadas por supervisión'">
+                          +{{ celda?.horasAdicionalesAprobadas }}h⚡
+                        </span>
+                      } @else if ((celda?.solicitudesPendientesCount || 0) > 0) {
+                        <span class="extra-pend-mini-tag" title="Reporte de tiempo adicional pendiente de revisión">⏳</span>
+                      }
                       @if (celda?.nota) {
                         <span class="nota-mini-tag" [title]="'💬 Nota: ' + celda?.nota">💬</span>
                       }
@@ -770,6 +767,11 @@ import {
                 <div>
                   <strong>{{ fila.horasTrabajadas }}</strong><span class="sub-contract">/{{ fila.horasContratadasEfectivas ?? fila.empleado.horasContratoMes }}</span>
                 </div>
+                @if ((fila.horasAdicionalesAprobadas || 0) > 0) {
+                  <div class="multi-srv-hours-badge" [title]="(fila.horasExtrasTotales || 0) > 0 ? 'Incluye ' + fila.horasExtrasTotales + 'h extras CST por exceso sobre meta mensual' : 'Incluye +' + fila.horasAdicionalesAprobadas + 'h adicionales que nivelan meta mensual'">
+                    +{{ fila.horasAdicionalesAprobadas }}h ⚡{{ (fila.horasExtrasTotales || 0) > 0 ? ' (' + fila.horasExtrasTotales + 'h ext)' : '' }}
+                  </div>
+                }
                 @if (fila.horasOtrosServicios > 0) {
                   <div class="multi-srv-hours-badge">
                     {{ fila.horasLocales }}h aquí · {{ fila.horasOtrosServicios }}h apoyo
@@ -838,9 +840,6 @@ import {
           <tr class="coverage-quad-header-row">
             <td class="col-sticky-emp coverage-quad-title-cell">
               <span>🎯 Cobertura por Turno</span>
-              @if (filtroCategoriaActiva !== 'TODAS') {
-                <span class="coverage-cargo-tag">({{ filtroCategoriaActiva }})</span>
-              }
             </td>
             <td [attr.colspan]="diasDelMes.length + 10" class="coverage-quad-meta-cell">
               <div class="cov-quad-bar">
@@ -939,8 +938,6 @@ export class PlanificadorCuadranteComponent implements OnDestroy {
   @Input() anioSeleccionado = Number(hoyColombiaIso().substring(0, 4));
   readonly semaforo = SEMAFORO_BANCO_HORAS;
   @Input() esPeriodoActual = true;
-  @Input() filtroCategoriaActiva = 'TODAS';
-  @Input() categoriasEnServicioActual: string[] = [];
   @Input() estadoCuadrante = 'BORRADOR';
   @Input() autoAvanzarAlTeclear = false;
   @Input() ultimaSincronizacionIntranet = '';
@@ -967,7 +964,6 @@ export class PlanificadorCuadranteComponent implements OnDestroy {
   @Output() cambiarServicio = new EventEmitter<string>();
   @Output() navegarMes = new EventEmitter<-1 | 1>();
   @Output() irAMesActual = new EventEmitter<void>();
-  @Output() cambiarFiltroCategoria = new EventEmitter<string>();
   @Output() cambiarAutoAvanzar = new EventEmitter<boolean>();
   @Output() sincronizarNovedadesIntranet = new EventEmitter<void>();
   @Output() abrirModalRotacion = new EventEmitter<void>();

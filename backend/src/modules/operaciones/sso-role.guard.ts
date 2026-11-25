@@ -98,10 +98,12 @@ export class SsoRoleGuard implements CanActivate {
         (method === 'POST' && url.endsWith('/api/v1/permutas')) ||
         (method === 'PATCH' &&
           (url.endsWith('/aceptar-par') || url.endsWith('/rechazar-par')));
+      const esAccionTiempoAdicionalPropia =
+        method === 'POST' && url.endsWith('/api/v1/tiempo-adicional');
 
-      if (!esAccionPermutaPropia) {
+      if (!esAccionPermutaPropia && !esAccionTiempoAdicionalPropia) {
         throw new ForbiddenException(
-          'Acceso denegado: tu perfil de Colaborador solo está autorizado para solicitar o responder permutas entre pares.'
+          'Acceso denegado: tu perfil de Colaborador solo está autorizado para solicitar permutas o reportar tiempo adicional propio.'
         );
       }
       return true;

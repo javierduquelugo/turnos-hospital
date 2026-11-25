@@ -74,8 +74,6 @@
       [mesSeleccionado]="catalogos.mesSeleccionado()"
       [anioSeleccionado]="catalogos.anioSeleccionado()"
       [esPeriodoActual]="catalogos.esPeriodoActual()"
-      [filtroCategoriaActiva]="cuadrante.filtroCategoriaActiva()"
-      [categoriasEnServicioActual]="cuadrante.categoriasEnServicioActual()"
       [estadoCuadrante]="cuadrante.estadoCuadrante()"
       [autoAvanzarAlTeclear]="cuadrante.autoAvanzarAlTeclear()"
       [ultimaSincronizacionIntranet]="cuadrante.ultimaSincronizacionIntranet()"
@@ -101,7 +99,6 @@
       (cambiarServicio)="cambiarServicio($event)"
       (navegarMes)="navegarMes($event)"
       (irAMesActual)="irAMesActual()"
-      (cambiarFiltroCategoria)="cuadrante.filtroCategoriaActiva.set($event)"
       (cambiarAutoAvanzar)="cuadrante.autoAvanzarAlTeclear.set($event)"
       (sincronizarNovedadesIntranet)="cuadrante.sincronizarNovedadesIntranet()"
       (abrirModalRotacion)="cuadrante.abrirModalRotacion()"
@@ -140,6 +137,7 @@
       [notificacionesCount]="permutasAuditoria.notificacionesSolicitudesCount()"
       [esColaborador]="catalogos.esColaborador()"
       [permutas]="permutasAuditoria.permutasVisiblesDashboard()"
+      [solicitudesTiempoAdicional]="permutasAuditoria.solicitudesTiempoAdicionalVisiblesDashboard()"
       [bitacoraAuditoria]="permutasAuditoria.bitacoraAuditoria()"
       [sesionActual]="catalogos.sesionActual()"
       (cambiarServicio)="cambiarServicio($event)"
@@ -147,6 +145,7 @@
       (rechazarPermuta)="permutasAuditoria.rechazarPermuta($event)"
       (aceptarPropuestaPar)="permutasAuditoria.aceptarPropuestaPar($event)"
       (rechazarPropuestaPar)="permutasAuditoria.rechazarPropuestaPar($event)"
+      (resolverTiempoAdicional)="permutasAuditoria.resolverSolicitudTiempoAdicional($event.id, $event)"
       (refrescarDatos)="recargarDatosDashboard()">
     </app-dashboard-solicitudes>
   }
@@ -228,6 +227,7 @@
       [companeroPermutaId]="portalReportes.companeroPermutaId()"
       [asignaciones]="portalReportes.asignacionesMesPortal()"
       [misSolicitudesEnviadas]="portalReportes.misSolicitudesEnviadasPortal()"
+      [misSolicitudesTiempoAdicional]="portalReportes.misSolicitudesTiempoAdicionalPortal()"
       [equipoDeGuardiaDia]="portalReportes.equipoDeGuardiaDiaSeleccionado()"
       (cambiarMes)="cambiarMesPortal($event)"
       (cambiarAnio)="cambiarAnioPortal($event)"
@@ -239,6 +239,7 @@
       (rechazarPropuestaPar)="permutasAuditoria.rechazarPropuestaPar($event)"
       (cambiarCompaneroPermuta)="portalReportes.companeroPermutaId.set($event)"
       (enviarSolicitudPermuta)="portalReportes.enviarSolicitudPermutaDesdePortal()"
+      (enviarSolicitudTiempoAdicional)="portalReportes.enviarSolicitudTiempoAdicionalDesdePortal($event)"
       (abrirMenuContextualPortal)="abrirMenuContextualPortal($event)"
       (abrirInspectorDiaPortal)="abrirDrawerPortalDia($event)"
     />

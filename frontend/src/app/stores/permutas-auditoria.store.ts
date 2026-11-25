@@ -6,12 +6,14 @@ import {
   CodigoTurno,
   PermutaItem,
   RegistroAuditoria,
+  SolicitudTiempoAdicionalItem,
 } from '../models';
 import { TurnosApiService } from '../turnos-api.service';
 import {
   calcularDescansoEntreTurnosMin,
   DESCANSO_MINIMO_ENTRE_TURNOS_MIN,
   esCodigoExoneracionContrato,
+  r2,
 } from '../shared/liquidacion-horas';
 import { CatalogosSsoStore } from './catalogos-sso.store';
 import { CuadranteStore } from './cuadrante.store';
@@ -25,6 +27,7 @@ export class PermutasAuditoriaStore {
   private readonly cuadrante = inject(CuadranteStore);
 
   readonly listaPermutas = signal<PermutaItem[]>([]);
+  readonly listaSolicitudesTiempoAdicional = signal<SolicitudTiempoAdicionalItem[]>([]);
   readonly bitacoraAuditoria = signal<RegistroAuditoria[]>([]);
 
   private readonly auditoriaFiltroSubject = new Subject<{
@@ -55,6 +58,24 @@ export class PermutasAuditoriaStore {
     return todas.filter((p) => !srvActivo || p.servicioId === srvActivo);
   });
 
+  // Solicitudes de Tiempo Adicional (Horas Extras y Llamados DISP) visibles según rol y servicio
+  readonly solicitudesTiempoAdicionalVisiblesDashboard = computed<SolicitudTiempoAdicionalItem[]>(() => {
+    const todas = this.listaSolicitudesTiempoAdicional();
+    const sesion = this.catalogos.sesionActual();
+    const srvActivo = this.catalogos.servicioSeleccionadoId();
+
+    if (sesion && sesion.rol === 'COLABORADOR') {
+      return todas.filter((s) => s.empleadoId === sesion.empleadoId);
+    }
+
+    if (sesion && sesion.rol === 'COORDINADOR') {
+      const permitidos = new Set(sesion.serviciosPermitidosIds || [sesion.servicioBaseId]);
+      return todas.filter((s) => s.servicioId === srvActivo && permitidos.has(s.servicioId));
+    }
+
+    return todas.filter((s) => !srvActivo || s.servicioId === srvActivo);
+  });
+
   // Notificaciones dinámicas de Solicitudes según el rol (Badge numérico en el menú lateral)
   readonly notificacionesSolicitudesCount = computed<number>(() => {
     const sesion = this.catalogos.sesionActual();
@@ -66,7 +87,13 @@ export class PermutasAuditoriaStore {
         (p) => p.receptorId === sesion.empleadoId && p.estado === 'PENDIENTE_PAR'
       ).length;
     }
-    return this.permutasVisiblesDashboard().filter((p) => p.estado === 'PENDIENTE_SUPERVISOR').length;
+    const permPendientes = this.permutasVisiblesDashboard().filter(
+      (p) => p.estado === 'PENDIENTE_SUPERVISOR'
+    ).length;
+    const tiempoPendientes = this.solicitudesTiempoAdicionalVisiblesDashboard().filter(
+      (s) => s.estado === 'PENDIENTE_SUPERVISOR'
+    ).length;
+    return permPendientes + tiempoPendientes;
   });
 
   constructor() {
@@ -155,6 +182,19 @@ export class PermutasAuditoriaStore {
           try {
             localStorage.removeItem('rafa_turnos_permutas');
           } catch {}
+        }
+      },
+      error: () => {},
+    });
+    this.sincronizarTiempoAdicionalDesdePostgres();
+  }
+
+  sincronizarTiempoAdicionalDesdePostgres(): void {
+    if (typeof this.api.getSolicitudesTiempoAdicional !== 'function') return;
+    this.api.getSolicitudesTiempoAdicional().subscribe({
+      next: (solicitudesDb) => {
+        if (Array.isArray(solicitudesDb)) {
+          this.listaSolicitudesTiempoAdicional.set(solicitudesDb);
         }
       },
       error: () => {},
@@ -454,6 +494,142 @@ export class PermutasAuditoriaStore {
         const msg = err?.error?.message || 'No fue posible rechazar la solicitud en el servidor.';
         this.notificacion.mostrar(`⛔ ${msg}`);
         this.sincronizarPermutasDesdePostgres();
+      },
+    });
+  }
+
+  crearSolicitudTiempoAdicionalDesdePortal(
+    dto: {
+      empleadoId: string;
+      servicioId: string;
+      anio: number;
+      mes: number;
+      dia: number;
+      turnoBase?: string;
+      tipo?: 'HORA_EXTRA_PROLONGACION' | 'DISPONIBILIDAD_LLAMADO' | 'GUARDIA_EXTRAORDINARIA';
+      horaInicio: string;
+      horaFin: string;
+      motivoCategoria: string;
+      motivoDetalle: string;
+      soporteClinico?: string;
+    },
+    onExito?: () => void
+  ): void {
+    this.api.crearSolicitudTiempoAdicional(dto).subscribe({
+      next: (creada) => {
+        this.listaSolicitudesTiempoAdicional.set([
+          creada,
+          ...this.listaSolicitudesTiempoAdicional(),
+        ]);
+
+        const key = `${creada.anio}-${creada.mes}`;
+        this.cuadrante.asignacionesPorPeriodo.update((todo) => {
+          const copia = { ...todo };
+          const mapaPeriodo = { ...(copia[key] || {}) };
+          const fila = { ...(mapaPeriodo[creada.empleadoId] || {}) };
+          const anterior = fila[creada.dia] || { codigo: (creada.turnoBase || 'L') as CodigoTurno };
+          fila[creada.dia] = {
+            ...anterior,
+            solicitudesPendientesCount: (anterior.solicitudesPendientesCount || 0) + 1,
+          };
+          mapaPeriodo[creada.empleadoId] = fila;
+          copia[key] = mapaPeriodo;
+          return copia;
+        });
+
+        this.notificacion.mostrar(
+          `⏰ Reporte de +${creada.horasCalculadas}h (${creada.horaInicio}–${creada.horaFin}) enviado a Supervisión para validación.`
+        );
+        if (onExito) onExito();
+      },
+      error: (err) => {
+        const msg = err?.error?.message || 'No fue posible registrar el tiempo adicional.';
+        this.notificacion.mostrar(`⛔ ${msg}`);
+      },
+    });
+  }
+
+  resolverSolicitudTiempoAdicional(
+    id: string,
+    dto: {
+      accion: 'APROBAR' | 'RECHAZAR';
+      horasAprobadas?: number;
+      observacionSupervisor?: string;
+      motivoRechazo?: string;
+    }
+  ): void {
+    this.api.resolverSolicitudTiempoAdicional(id, dto).subscribe({
+      next: (resuelta) => {
+        this.listaSolicitudesTiempoAdicional.set(
+          this.listaSolicitudesTiempoAdicional().map((s) => (s.id === id ? resuelta : s))
+        );
+
+        const key = `${resuelta.anio}-${resuelta.mes}`;
+        this.cuadrante.asignacionesPorPeriodo.update((todo) => {
+          const copia = { ...todo };
+          const mapaPeriodo = { ...(copia[key] || {}) };
+          const fila = { ...(mapaPeriodo[resuelta.empleadoId] || {}) };
+          const anterior = fila[resuelta.dia] || {
+            codigo: (resuelta.turnoBase || 'L') as CodigoTurno,
+          };
+          const pendientesRest = Math.max(0, (anterior.solicitudesPendientesCount || 1) - 1);
+
+          if (resuelta.estado === 'APROBADA') {
+            const hEff = r2(Number(resuelta.horasAprobadas ?? resuelta.horasCalculadas) || 0);
+            const tramosPrev = Array.isArray(anterior.tramosAdicionales)
+              ? anterior.tramosAdicionales.filter((t) => t.id !== resuelta.id)
+              : [];
+            tramosPrev.push({
+              id: resuelta.id,
+              tipo: resuelta.tipo,
+              horaInicio: resuelta.horaInicio,
+              horaFin: resuelta.horaFin,
+              horasAprobadas: hEff,
+              hod: Number(resuelta.hod) || 0,
+              hon: Number(resuelta.hon) || 0,
+              hdfd: Number(resuelta.hdfd) || 0,
+              hdfn: Number(resuelta.hdfn) || 0,
+              motivoCategoria: resuelta.motivoCategoria,
+              motivoDetalle: resuelta.motivoDetalle,
+            });
+            const totalAdic = r2(
+              tramosPrev.reduce((acc, t) => acc + (Number(t.horasAprobadas) || 0), 0)
+            );
+            fila[resuelta.dia] = {
+              ...anterior,
+              horasAdicionalesAprobadas: totalAdic,
+              tramosAdicionales: tramosPrev,
+              solicitudesPendientesCount: pendientesRest,
+            };
+          } else {
+            fila[resuelta.dia] = {
+              ...anterior,
+              solicitudesPendientesCount: pendientesRest,
+            };
+          }
+
+          mapaPeriodo[resuelta.empleadoId] = fila;
+          copia[key] = mapaPeriodo;
+          return copia;
+        });
+
+        this.sincronizarAuditoriasDesdePostgres();
+
+        if (resuelta.estado === 'APROBADA') {
+          const hEff = resuelta.horasAprobadas ?? resuelta.horasCalculadas;
+          this.notificacion.mostrar(
+            `✅ Tiempo adicional aprobado (+${hEff}h ⚡) para ${resuelta.empleadoNombre} y aplicado al acumulado mensual.`
+          );
+        } else {
+          this.notificacion.mostrar(
+            `ℹ️ Solicitud de tiempo adicional de ${resuelta.empleadoNombre} rechazada.`
+          );
+        }
+      },
+      error: (err) => {
+        const msg = err?.error?.message || 'No fue posible procesar la solicitud en el servidor.';
+        this.notificacion.mostrar(`⛔ ${msg}`);
+        this.sincronizarTiempoAdicionalDesdePostgres();
       },
     });
   }

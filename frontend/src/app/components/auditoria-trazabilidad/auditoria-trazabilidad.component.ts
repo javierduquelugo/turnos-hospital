@@ -139,6 +139,13 @@ import { coincideBusquedaCampos, dividirTerminosBusqueda } from '../../utils/bus
                 (click)="onCambiarTipoAccion('APOYO_SERVICIO')">
                 🔄 Apoyos
               </button>
+              <button
+                type="button"
+                class="pill-tab"
+                [class.active]="tipoAccionFiltro === 'TIEMPO_ADICIONAL'"
+                (click)="onCambiarTipoAccion('TIEMPO_ADICIONAL')">
+                ⏰ Tiempo Adicional / DISP
+              </button>
             </div>
           </div>
 
@@ -354,6 +361,7 @@ export class AuditoriaTrazabilidadComponent implements OnChanges {
     | 'NOTA_CELDA'
     | 'FIJACION_CELDA'
     | 'APOYO_SERVICIO'
+    | 'TIEMPO_ADICIONAL'
     | 'NOVEDAD_INTRANET' = 'TODAS';
   servicioFiltro = 'TODOS';
   fechaDesde = '';
@@ -408,6 +416,7 @@ export class AuditoriaTrazabilidadComponent implements OnChanges {
       | 'NOTA_CELDA'
       | 'FIJACION_CELDA'
       | 'APOYO_SERVICIO'
+      | 'TIEMPO_ADICIONAL'
       | 'NOVEDAD_INTRANET'
   ): void {
     this.tipoAccionFiltro = tipo;
@@ -520,6 +529,8 @@ export class AuditoriaTrazabilidadComponent implements OnChanges {
         return '📌 Fijación Celda';
       case 'APOYO_SERVICIO':
         return '🔄 Apoyo 1 Día';
+      case 'TIEMPO_ADICIONAL':
+        return '⏰ Tiempo Adicional / DISP';
       case 'NOVEDAD_INTRANET':
         return '🏥 Novedad Intranet';
       default:
@@ -543,6 +554,8 @@ export class AuditoriaTrazabilidadComponent implements OnChanges {
         return 'badge-fijacion';
       case 'APOYO_SERVICIO':
         return 'badge-apoyo';
+      case 'TIEMPO_ADICIONAL':
+        return 'badge-masiva';
       case 'NOVEDAD_INTRANET':
         return 'badge-intranet';
       default:

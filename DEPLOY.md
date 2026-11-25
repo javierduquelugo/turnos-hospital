@@ -10,8 +10,8 @@ Para poner en marcha todo el ecosistema (Base de Datos PostgreSQL 16 + Backend N
 
 ```bash
 # 1. Clonar el repositorio
-git clone https://github.com/jhoncalderonvargas-hub/RafaTurnos.git
-cd RafaTurnos
+git clone https://github.com/javierduquelugo/turnos-hospital.git
+cd turnos-hospital
 
 # 2. (Recomendado en servidor) Definir secretos en archivo .env en la raíz del proyecto
 # INTRANET_JWT_SECRET=<secreto_largo_compartido_con_intranet>

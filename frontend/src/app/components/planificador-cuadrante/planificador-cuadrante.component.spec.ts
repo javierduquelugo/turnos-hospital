@@ -297,4 +297,46 @@ describe('PlanificadorCuadranteComponent (Switch Compacto / Nombres y Horarios)'
     btnExcel!.click();
     expect(excelSpy).toHaveBeenCalledTimes(1);
   });
+
+  it('limita el selector de servicio hospitalario activo a un máximo del 35% del encabezado y expone el nombre completo en el atributo title', () => {
+    const el: HTMLElement = fixture.nativeElement;
+    const toolbar = el.querySelector('.toolbar-controls') as HTMLElement | null;
+    const wrapper = el.querySelector('.toolbar-zone-context .control-item-servicio') as HTMLElement | null;
+    const select = el.querySelector('select.select-servicio') as HTMLSelectElement | null;
+    expect(toolbar).not.toBeNull();
+    expect(wrapper).not.toBeNull();
+    expect(select).not.toBeNull();
+    expect(wrapper!.getAttribute('title')).toContain('Urgencias (URG)');
+    expect(select!.getAttribute('title')).toBe('Urgencias (URG)');
+
+    toolbar!.style.width = '1000px';
+    fixture.detectChanges();
+    expect(select!.getBoundingClientRect().width).toBeLessThanOrEqual(350);
+  });
+
+  it('no renderiza el desplegable de filtro por cargo en la barra superior del planificador', () => {
+    const el: HTMLElement = fixture.nativeElement;
+    expect(el.querySelector('select.select-cargo')).toBeNull();
+    expect(el.querySelector('.toolbar-controls')?.textContent || '').not.toContain('Todos los cargos');
+  });
+
+  it('mantiene el selector de fecha centrado entre el servicio a la izquierda y las herramientas/gobernanza a la derecha', () => {
+    const el: HTMLElement = fixture.nativeElement;
+    const toolbar = el.querySelector('.toolbar-controls') as HTMLElement;
+    const context = el.querySelector('.toolbar-zone-context') as HTMLElement;
+    const period = el.querySelector('.toolbar-zone-period') as HTMLElement;
+    const governance = el.querySelector('.toolbar-zone-governance') as HTMLElement;
+
+    toolbar.style.width = '1200px';
+    fixture.detectChanges();
+
+    const toolbarRect = toolbar.getBoundingClientRect();
+    const periodRect = period.getBoundingClientRect();
+    const toolbarCenter = toolbarRect.left + toolbarRect.width / 2;
+    const periodCenter = periodRect.left + periodRect.width / 2;
+
+    expect(Math.abs(periodCenter - toolbarCenter)).toBeLessThanOrEqual(2);
+    expect(context.getBoundingClientRect().right).toBeLessThanOrEqual(periodRect.left);
+    expect(governance.getBoundingClientRect().left).toBeGreaterThanOrEqual(periodRect.right);
+  });
 });
