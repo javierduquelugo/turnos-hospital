@@ -287,6 +287,7 @@ export class ServiciosAdminController {
         tipoAsistencia: s.macroproceso?.codigo || 'URGENCIAS',
         intranetId: s.intranetId,
         permitePermutaEntreCargos: Boolean(s.permitePermutaEntreCargos),
+        coordinadoresIds: Array.isArray((s as any).coordinadoresIds) ? (s as any).coordinadoresIds : [],
         reqDia: s.reqDia ?? 4,
         reqNoche: s.reqNoche ?? 2,
         modalidadDias: s.modalidadDias || 'TODOS_24_7',
@@ -1255,6 +1256,7 @@ export class ServiciosAdminController {
       turnosHabilitados?: string[];
       reglasPorCargo?: any[];
       empleadosIds?: string[];
+      coordinadoresIds?: string[];
     }
   ) {
     const cod = data.codigo?.trim().toUpperCase();
@@ -1284,6 +1286,9 @@ export class ServiciosAdminController {
     const reqD = data.reqDia !== undefined ? Math.max(0, Number(data.reqDia) || 0) : 4;
     const reqN = data.reqNoche !== undefined ? Math.max(0, Number(data.reqNoche) || 0) : 2;
     const macroprocesoId = await this.resolverMacroprocesoId(data.macroprocesoId || data.tipoAsistencia);
+    const coordinadoresLimpios = Array.isArray(data.coordinadoresIds)
+      ? Array.from(new Set(data.coordinadoresIds.map((c) => String(c).trim()).filter(Boolean)))
+      : [];
 
     const creado = await this.prisma.servicio.create({
       data: {
@@ -1292,6 +1297,7 @@ export class ServiciosAdminController {
         macroprocesoId,
         intranetId: data.intranetId,
         permitePermutaEntreCargos: Boolean(data.permitePermutaEntreCargos),
+        coordinadoresIds: coordinadoresLimpios,
         reqDia: reqD,
         reqNoche: reqN,
         modalidadDias: data.modalidadDias || 'TODOS_24_7',
@@ -1523,12 +1529,13 @@ export class ServiciosAdminController {
       },
     });
 
+    const empresaIdRecalculo = updateData.empresaContratanteId || emp.empresaContratanteId;
     if (
       (updateData.empresaContratanteId || body?.horasSemanalesOverride !== undefined) &&
-      updateData.empresaContratanteId &&
+      empresaIdRecalculo &&
       typeof (this.liquidacionService as any)?.recalcularPorEmpresa === 'function'
     ) {
-      await (this.liquidacionService as any).recalcularPorEmpresa(updateData.empresaContratanteId);
+      await (this.liquidacionService as any).recalcularPorEmpresa(empresaIdRecalculo);
     }
 
     return {
@@ -1559,6 +1566,7 @@ export class ServiciosAdminController {
       turnosHabilitados?: string[];
       reglasPorCargo?: any[];
       empleadosIds?: string[];
+      coordinadoresIds?: string[];
     }
   ) {
     const existente = await this.prisma.servicio.findUnique({ where: { id } });
@@ -1636,6 +1644,13 @@ export class ServiciosAdminController {
         ...(data.permitePermutaEntreCargos !== undefined
           ? { permitePermutaEntreCargos: Boolean(data.permitePermutaEntreCargos) }
           : {}),
+        ...(Array.isArray(data.coordinadoresIds)
+          ? {
+              coordinadoresIds: Array.from(
+                new Set(data.coordinadoresIds.map((c) => String(c).trim()).filter(Boolean))
+              ),
+            }
+          : {}),
         ...(data.reqDia !== undefined ? { reqDia: tieneDiaSrv ? Math.max(0, Number(data.reqDia) || 0) : 0 } : {}),
         ...(data.reqNoche !== undefined ? { reqNoche: tieneNocheSrv ? Math.max(0, Number(data.reqNoche) || 0) : 0 } : {}),
         ...(data.modalidadDias !== undefined ? { modalidadDias: data.modalidadDias } : {}),
@@ -1678,6 +1693,55 @@ export class ServiciosAdminController {
     };
   }
 
+  // 2.1b Asignar o desasignar Coordinadores / Responsables de un Servicio (para permiso TurnosCuadranteEditar)
+  @Put(':id/coordinadores')
+  async actualizarCoordinadoresServicio(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      coordinadoresIds?: string[];
+      empleadoId?: string;
+      asignado?: boolean;
+    }
+  ) {
+    const srv = await this.prisma.servicio.findUnique({ where: { id } });
+    if (!srv) {
+      throw new NotFoundException(`No se encontró el servicio '${id}'.`);
+    }
+
+    let listaActual: string[] = Array.isArray((srv as any).coordinadoresIds)
+      ? [...(srv as any).coordinadoresIds]
+      : [];
+
+    if (Array.isArray(body?.coordinadoresIds)) {
+      listaActual = Array.from(
+        new Set(body.coordinadoresIds.map((c) => String(c).trim()).filter(Boolean))
+      );
+    } else if (body?.empleadoId) {
+      const empId = String(body.empleadoId).trim();
+      const yaEsta = listaActual.includes(empId);
+      const debeAsignar = body.asignado !== undefined ? Boolean(body.asignado) : !yaEsta;
+      if (debeAsignar && !yaEsta) {
+        listaActual.push(empId);
+      } else if (!debeAsignar && yaEsta) {
+        listaActual = listaActual.filter((x) => x !== empId);
+      }
+    }
+
+    const actualizado = await this.prisma.servicio.update({
+      where: { id },
+      data: { coordinadoresIds: listaActual } as any,
+    });
+
+    return {
+      ok: true,
+      servicioId: actualizado.id,
+      coordinadoresIds: Array.isArray((actualizado as any).coordinadoresIds)
+        ? (actualizado as any).coordinadoresIds
+        : listaActual,
+    };
+  }
+
   // 2.2 Eliminar un servicio si no tiene restricciones de integridad
   @Delete(':id')
   async eliminarServicio(@Param('id') id: string) {
@@ -1689,6 +1753,8 @@ export class ServiciosAdminController {
             empleadosBase: true,
             cuadrantes: true,
             asignacionesEjecutadas: true,
+            permutas: true,
+            solicitudesTiempoAdicional: true,
           },
         },
       },
@@ -1704,9 +1770,14 @@ export class ServiciosAdminController {
       );
     }
 
-    if (servicio._count.cuadrantes > 0 || servicio._count.asignacionesEjecutadas > 0) {
+    if (
+      servicio._count.cuadrantes > 0 ||
+      servicio._count.asignacionesEjecutadas > 0 ||
+      (servicio._count as any).permutas > 0 ||
+      (servicio._count as any).solicitudesTiempoAdicional > 0
+    ) {
       throw new ConflictException(
-        `No es posible eliminar el servicio '${servicio.nombre}' porque contiene historial de turnos o cuadrantes generados.`
+        `No es posible eliminar el servicio '${servicio.nombre}' porque contiene historial de turnos, solicitudes o cuadrantes generados.`
       );
     }
 

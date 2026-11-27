@@ -25,7 +25,15 @@ import {
   sumarDiasIso,
   turnoEsLaborado,
 } from '../../shared/liquidacion-horas';
-import { firmarJwtHmac, PayloadTokenSsoIntranet, RolUsuarioSso, verificarJwtHmac } from './jwt-sso.util';
+import {
+  derivarRolDesdePermisos,
+  firmarJwtHmac,
+  PayloadTokenSsoIntranet,
+  PermisoTurnosSso,
+  resolverPermisosSso,
+  RolUsuarioSso,
+  verificarJwtHmac,
+} from './jwt-sso.util';
 
 /** Marcador usado en tipos_turno para una celda explícitamente en blanco (ver CuadrantesController). */
 const CODIGO_CELDA_VACIA_DB = 'BLANCO';
@@ -378,7 +386,7 @@ export class PermutasController {
   }
 
   @Post()
-  async crearSolicitudPermuta(@Body() dto: SolicitudPermutaDto) {
+  async crearSolicitudPermuta(@Body() dto: SolicitudPermutaDto, @Req() req?: any) {
     // El periodo es obligatorio: sin él no es posible ubicar ni validar las celdas.
     const anio = Number(dto.anio);
     const mes = Number(dto.mes);
@@ -397,6 +405,16 @@ export class PermutasController {
       diaDestino: Number(dto.diaDestino),
       turnoDestino: dto.turnoDestino,
     });
+
+    const uSso = req?.usuarioSso;
+    if (
+      uSso?.rol === 'COLABORADOR' &&
+      (uSso.empleadoId || uSso.documento) &&
+      solicitante.id !== uSso.empleadoId &&
+      solicitante.documento !== String(uSso.documento)
+    ) {
+      throw new ForbiddenException('Solo puedes radicar solicitudes de permuta para tu propio usuario.');
+    }
 
     const permuta = await this.prisma.solicitudPermuta.create({
       data: {
@@ -443,8 +461,17 @@ export class PermutasController {
    * Transición atómica: PENDIENTE_PAR -> PENDIENTE_SUPERVISOR.
    */
   @Patch(':id/aceptar-par')
-  async aceptarPermutaPar(@Param('id') id: string) {
+  async aceptarPermutaPar(@Param('id') id: string, @Req() req?: any) {
     return this.prisma.$transaction(async (tx) => {
+      const uSso = req?.usuarioSso;
+      if (uSso?.rol === 'COLABORADOR' && uSso.empleadoId) {
+        const previa = await tx.solicitudPermuta.findUnique({ where: { id } });
+        if (previa && previa.receptorId && previa.receptorId !== uSso.empleadoId) {
+          throw new ForbiddenException(
+            'Solo el compañero receptor propuesto puede aceptar esta solicitud de permuta.'
+          );
+        }
+      }
       const claim = await tx.solicitudPermuta.updateMany({
         where: { id, estado: 'PENDIENTE_PAR' },
         data: { estado: 'PENDIENTE_SUPERVISOR' },
@@ -465,9 +492,27 @@ export class PermutasController {
    * Transición atómica estricta: PENDIENTE_PAR -> RECHAZADA.
    */
   @Patch(':id/rechazar-par')
-  async rechazarPermutaPar(@Param('id') id: string, @Body() body?: { motivo?: string }) {
+  async rechazarPermutaPar(
+    @Param('id') id: string,
+    @Body() body?: { motivo?: string },
+    @Req() req?: any
+  ) {
     const motivo = body?.motivo || 'Declinada por el compañero receptor.';
     return this.prisma.$transaction(async (tx) => {
+      const uSso = req?.usuarioSso;
+      if (uSso?.rol === 'COLABORADOR' && uSso.empleadoId) {
+        const previa = await tx.solicitudPermuta.findUnique({ where: { id } });
+        if (
+          previa &&
+          previa.receptorId &&
+          previa.receptorId !== uSso.empleadoId &&
+          previa.solicitanteId !== uSso.empleadoId
+        ) {
+          throw new ForbiddenException(
+            'Solo los colaboradores involucrados en la permuta pueden declinarla.'
+          );
+        }
+      }
       const claim = await tx.solicitudPermuta.updateMany({
         where: { id, estado: 'PENDIENTE_PAR' },
         data: {
@@ -519,6 +564,21 @@ export class PermutasController {
           },
         });
         if (!permuta) throw new NotFoundException('Solicitud de permuta no encontrada');
+        const uSso = req?.usuarioSso;
+        const permsApr: string[] = Array.isArray(uSso?.permisos) ? uSso.permisos : [];
+        if (
+          uSso &&
+          !permsApr.includes('TurnosConfiguracionAdmin') &&
+          uSso.rol !== 'ADMIN_TH' &&
+          Array.isArray(uSso.serviciosCoordinados) &&
+          uSso.serviciosCoordinados.length > 0 &&
+          permuta.servicioId &&
+          !uSso.serviciosCoordinados.includes(permuta.servicioId)
+        ) {
+          throw new ForbiddenException(
+            'No tienes permisos de coordinación sobre el servicio de esta solicitud de permuta.'
+          );
+        }
         if (!permuta.anio || !permuta.mes) {
           throw new BadRequestException(
             'La solicitud no tiene periodo (año/mes) registrado. Recházala y pide al colaborador que la vuelva a enviar.'
@@ -661,7 +721,6 @@ export class PermutasController {
           horasRec
         );
 
-        const uSso = req?.usuarioSso;
         let actorNombre = 'Coordinación Asistencial';
         if (uSso) {
           const rolEtiqueta = uSso.rol === 'ADMIN_TH' ? 'Talento Humano' : 'Coordinador';
@@ -781,9 +840,29 @@ export class PermutasController {
    * Transición atómica estricta: solo desde PENDIENTE_PAR o PENDIENTE_SUPERVISOR.
    */
   @Patch(':id/rechazar')
-  async rechazarPermuta(@Param('id') id: string, @Body() body?: { motivo?: string }) {
+  async rechazarPermuta(
+    @Param('id') id: string,
+    @Body() body?: { motivo?: string },
+    @Req() req?: any
+  ) {
     const motivo = body?.motivo || 'Rechazada por la supervisora asistencial.';
     return this.prisma.$transaction(async (tx) => {
+      const uSso = req?.usuarioSso;
+      const permsRech: string[] = Array.isArray(uSso?.permisos) ? uSso.permisos : [];
+      if (
+        uSso &&
+        !permsRech.includes('TurnosConfiguracionAdmin') &&
+        uSso.rol !== 'ADMIN_TH' &&
+        Array.isArray(uSso.serviciosCoordinados) &&
+        uSso.serviciosCoordinados.length > 0
+      ) {
+        const previa = await tx.solicitudPermuta.findUnique({ where: { id } });
+        if (previa?.servicioId && !uSso.serviciosCoordinados.includes(previa.servicioId)) {
+          throw new ForbiddenException(
+            'No tienes permisos de coordinación sobre el servicio de esta solicitud de permuta.'
+          );
+        }
+      }
       const claim = await tx.solicitudPermuta.updateMany({
         where: { id, estado: { in: ['PENDIENTE_PAR', 'PENDIENTE_SUPERVISOR'] } },
         data: {
@@ -897,7 +976,8 @@ export class IntranetIntegrationController {
   private async construirPerfilUsuarioSso(
     documento: string,
     rolSolicitado?: RolUsuarioSso,
-    serviciosExtraIds?: string[]
+    serviciosExtraIds?: string[],
+    permisosSolicitados?: string[]
   ) {
     let emp = await this.prisma.empleado.findFirst({
       where: {
@@ -985,24 +1065,48 @@ export class IntranetIntegrationController {
       );
     }
 
-    const rolValido: RolUsuarioSso =
-      rolSolicitado === 'ADMIN_TH' ||
-      rolSolicitado === 'COORDINADOR' ||
-      rolSolicitado === 'COLABORADOR'
-        ? rolSolicitado
-        : 'COLABORADOR';
+    const permisos: PermisoTurnosSso[] = resolverPermisosSso(rolSolicitado, permisosSolicitados);
+    const rolValido: RolUsuarioSso = derivarRolDesdePermisos(permisos, rolSolicitado);
 
-    let serviciosPermitidosIds: string[] = [emp.servicioBaseId];
-    if (rolValido === 'ADMIN_TH') {
+    const tieneAlcanceGlobal =
+      permisos.includes('TurnosConsultaGlobal') ||
+      permisos.includes('TurnosNominaGestionar') ||
+      permisos.includes('TurnosConfiguracionAdmin') ||
+      rolValido === 'ADMIN_TH';
+
+    const hermanosIds = emp.servicioBase.serviciosHermanosOrigen.map(
+      (sh) => sh.servicioHermanoId
+    );
+    let serviciosCoordinadosEnDbIds: string[] = [];
+    if (permisos.includes('TurnosCuadranteEditar') || rolValido === 'COORDINADOR') {
+      try {
+        const srvsAll = await this.prisma.servicio.findMany({
+          select: { id: true, coordinadoresIds: true } as any,
+        });
+        if (Array.isArray(srvsAll)) {
+          serviciosCoordinadosEnDbIds = srvsAll
+            .filter((s: any) =>
+              Array.isArray(s.coordinadoresIds) &&
+              (s.coordinadoresIds.includes(emp.id) || s.coordinadoresIds.includes(emp.documento))
+            )
+            .map((s: any) => s.id);
+        }
+      } catch {}
+    }
+
+    const serviciosCoordinados = Array.from(
+      new Set([
+        emp.servicioBaseId,
+        ...hermanosIds,
+        ...serviciosCoordinadosEnDbIds,
+        ...(serviciosExtraIds || []),
+      ])
+    );
+
+    let serviciosPermitidosIds: string[] = serviciosCoordinados;
+    if (tieneAlcanceGlobal) {
       const todosSrvs = await this.prisma.servicio.findMany({ select: { id: true } });
       serviciosPermitidosIds = todosSrvs.map((s) => s.id);
-    } else if (rolValido === 'COORDINADOR') {
-      const hermanosIds = emp.servicioBase.serviciosHermanosOrigen.map(
-        (sh) => sh.servicioHermanoId
-      );
-      serviciosPermitidosIds = Array.from(
-        new Set([emp.servicioBaseId, ...hermanosIds, ...(serviciosExtraIds || [])])
-      );
     }
 
     return {
@@ -1012,9 +1116,13 @@ export class IntranetIntegrationController {
       correo: emp.correo || undefined,
       categoria: emp.categoria?.nombre || 'Personal Asistencial',
       rol: rolValido,
+      permisos,
       servicioBaseId: emp.servicioBaseId,
       servicioBaseNombre: emp.servicioBase.nombre,
       serviciosPermitidosIds,
+      serviciosCoordinados: permisos.includes('TurnosConfiguracionAdmin')
+        ? serviciosPermitidosIds
+        : serviciosCoordinados,
       empresaContratanteId: emp.empresaContratanteId || (emp as any).empresaContratante?.id || undefined,
       empresaCodigo: (emp as any).empresaContratante?.codigo || undefined,
       empresaNombre: (emp as any).empresaContratante?.nombre || undefined,
@@ -1051,7 +1159,8 @@ export class IntranetIntegrationController {
     const usuario = await this.construirPerfilUsuarioSso(
       String(payload.documento),
       payload.rol,
-      payload.serviciosCoordinados
+      payload.serviciosCoordinados,
+      payload.permisos as string[] | undefined
     );
 
     const sessionToken = firmarJwtHmac(
@@ -1060,7 +1169,8 @@ export class IntranetIntegrationController {
         empleadoId: usuario.empleadoId,
         nombre: usuario.nombre,
         rol: usuario.rol,
-        serviciosCoordinados: usuario.serviciosPermitidosIds,
+        permisos: usuario.permisos,
+        serviciosCoordinados: usuario.serviciosCoordinados,
       },
       this.obtenerSecretSso(),
       28800 // 8 horas de sesión
@@ -1093,10 +1203,25 @@ export class IntranetIntegrationController {
     const usuario = await this.construirPerfilUsuarioSso(
       String(payload.documento),
       payload.rol,
-      payload.serviciosCoordinados
+      undefined,
+      payload.permisos as string[] | undefined
+    );
+
+    const sessionToken = firmarJwtHmac(
+      {
+        documento: usuario.documento,
+        empleadoId: usuario.empleadoId,
+        nombre: usuario.nombre,
+        rol: usuario.rol,
+        permisos: usuario.permisos,
+        serviciosCoordinados: usuario.serviciosCoordinados,
+      },
+      this.obtenerSecretSso(),
+      28800
     );
 
     return {
+      sessionToken,
       usuario,
       intranetReturnUrl: this.obtenerUrlRetornoIntranet(),
     };
@@ -1780,6 +1905,31 @@ export interface ResolverTiempoAdicionalDto {
   motivoRechazo?: string;
 }
 
+/**
+ * Determina si dos franjas horarias HH:mm en el mismo día se solapan entre sí
+ * (soportando cruces de medianoche donde fin <= inicio suma 1440 min).
+ * Permite múltiples llamados o tramos contiguos/separados en el mismo día (Mejora 1 DISP).
+ */
+function seSolapanFranjasHorarias(
+  iniA: string,
+  finA: string,
+  iniB: string,
+  finB: string
+): boolean {
+  const sA = parseHoraMin(iniA);
+  const dA = duracionHorarioMin(iniA, finA, false);
+  const sB = parseHoraMin(iniB);
+  const dB = duracionHorarioMin(iniB, finB, false);
+  if (sA === null || dA === null || sB === null || dB === null) return false;
+  const eA = sA + dA;
+  const eB = sB + dB;
+  return (
+    Math.max(sA, sB) < Math.min(eA, eB) ||
+    Math.max(sA + 1440, sB) < Math.min(eA + 1440, eB) ||
+    Math.max(sA, sB + 1440) < Math.min(eA, eB + 1440)
+  );
+}
+
 @Controller('api/v1/tiempo-adicional')
 export class TiempoAdicionalController {
   constructor(
@@ -1928,9 +2078,9 @@ export class TiempoAdicionalController {
     const uSso = req?.usuarioSso;
     if (
       uSso?.rol === 'COLABORADOR' &&
-      uSso.empleadoId &&
+      (uSso.empleadoId || uSso.documento) &&
       uSso.empleadoId !== empleado.id &&
-      uSso.documento !== empleado.documento
+      String(uSso.documento) !== empleado.documento
     ) {
       throw new ForbiddenException('Solo puedes reportar tiempo adicional para tu propio usuario.');
     }
@@ -1958,7 +2108,7 @@ export class TiempoAdicionalController {
     }
 
     const fechaUtc = new Date(`${fechaIso}T00:00:00.000Z`);
-    const [novedadActiva, asigActual, duplicada] = await Promise.all([
+    const [novedadActiva, asigActual, solicitudesActivasDia] = await Promise.all([
       this.prisma.novedadAusencia.findFirst({
         where: {
           empleadoId: empleado.id,
@@ -1970,17 +2120,27 @@ export class TiempoAdicionalController {
         where: { empleadoId_fecha: { empleadoId: empleado.id, fecha: fechaUtc } },
         include: { tipoTurno: true },
       }),
-      typeof (this.prisma as any).solicitudTiempoAdicional?.findFirst === 'function'
-        ? (this.prisma as any).solicitudTiempoAdicional.findFirst({
+      typeof (this.prisma as any).solicitudTiempoAdicional?.findMany === 'function'
+        ? (this.prisma as any).solicitudTiempoAdicional.findMany({
             where: {
               empleadoId: empleado.id,
               fecha: fechaUtc,
-              horaInicio,
-              horaFin,
               estado: { in: ['PENDIENTE_SUPERVISOR', 'APROBADA'] },
             },
           })
-        : Promise.resolve(null),
+        : typeof (this.prisma as any).solicitudTiempoAdicional?.findFirst === 'function'
+          ? (this.prisma as any).solicitudTiempoAdicional
+              .findFirst({
+                where: {
+                  empleadoId: empleado.id,
+                  fecha: fechaUtc,
+                  horaInicio,
+                  horaFin,
+                  estado: { in: ['PENDIENTE_SUPERVISOR', 'APROBADA'] },
+                },
+              })
+              .then((r: any) => (r ? [r] : []))
+          : Promise.resolve([]),
     ]);
 
     if (novedadActiva) {
@@ -1988,9 +2148,19 @@ export class TiempoAdicionalController {
         `No es posible reportar tiempo adicional en una fecha con novedad de ausencia oficial activa (${novedadActiva.tipo}).`
       );
     }
-    if (duplicada) {
+
+    const listaActivasDia = Array.isArray(solicitudesActivasDia) ? solicitudesActivasDia : [];
+    const solSolapada = listaActivasDia.find((s: any) =>
+      seSolapanFranjasHorarias(horaInicio, horaFin, String(s.horaInicio || ''), String(s.horaFin || ''))
+    );
+    if (solSolapada) {
+      if (solSolapada.horaInicio === horaInicio && solSolapada.horaFin === horaFin) {
+        throw new ConflictException(
+          `Ya existe un reporte activo o aprobado para la franja ${horaInicio}–${horaFin} en el día ${dia}.`
+        );
+      }
       throw new ConflictException(
-        `Ya existe un reporte activo o aprobado para la franja ${horaInicio}–${horaFin} en el día ${dia}.`
+        `La franja reportada (${horaInicio}–${horaFin}) se solapa con otro reporte activo o aprobado del día ${dia} (${solSolapada.horaInicio}–${solSolapada.horaFin}). Puedes registrar múltiples llamados o tramos en el mismo día siempre que sus horarios no se crucen.`
       );
     }
 
@@ -2019,14 +2189,16 @@ export class TiempoAdicionalController {
       if (sBase !== null && durBase !== null && sRep !== null) {
         const eBase = sBase + durBase;
         let sRepAdj = sRep;
-        if (sRepAdj < sBase && eBase > 1440) {
+        // Solo es prolongación en la madrugada del día siguiente cuando el turno base cruza medianoche (eBase > 1440)
+        // y la hora de inicio reportada está en la madrugada (antes del mediodía, sRep < 720)
+        if (sRepAdj < sBase && eBase > 1440 && sRepAdj < 720) {
           sRepAdj += 1440;
           esProlongacionDiaSiguiente = true;
         }
         const eRepAdj = sRepAdj + durMin;
-        if (sRepAdj >= sBase && eRepAdj <= eBase) {
+        if (Math.max(sRepAdj, sBase) < Math.min(eRepAdj, eBase)) {
           throw new ConflictException(
-            `La franja reportada (${horaInicio}–${horaFin}) ya está cubierta dentro del horario ordinario de tu turno ${codActual} (${asigActual.tipoTurno.horaInicio}–${asigActual.tipoTurno.horaFin}). Reporta únicamente el tiempo adicional posterior o previo al turno.`
+            `La franja reportada (${horaInicio}–${horaFin}) se cruza con el horario ordinario de tu turno ${codActual} (${asigActual.tipoTurno.horaInicio}–${asigActual.tipoTurno.horaFin}). Reporta únicamente el tiempo adicional posterior o previo al turno.`
           );
         }
       }

@@ -157,6 +157,7 @@ export interface ServicioHospitalario {
   tipoAsistencia: TipoAsistencia;
   intranetId?: string;
   permitePermutaEntreCargos?: boolean;
+  coordinadoresIds?: string[];
   reqDia: number;
   reqNoche: number;
   modalidadDias?: ModalidadDiasServicio;
@@ -487,6 +488,12 @@ export interface ModalConfirmacionConfig {
 
 export type RolUsuarioSso = 'ADMIN_TH' | 'COORDINADOR' | 'COLABORADOR';
 
+export type PermisoTurnosSso =
+  | 'TurnosCuadranteEditar'
+  | 'TurnosConsultaGlobal'
+  | 'TurnosNominaGestionar'
+  | 'TurnosConfiguracionAdmin';
+
 export interface SesionUsuarioSso {
   empleadoId: string;
   documento: string;
@@ -494,6 +501,7 @@ export interface SesionUsuarioSso {
   correo?: string;
   categoria: string;
   rol: RolUsuarioSso;
+  permisos?: PermisoTurnosSso[];
   servicioBaseId: string;
   servicioBaseNombre: string;
   serviciosPermitidosIds: string[];

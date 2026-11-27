@@ -226,7 +226,7 @@ export type SubVistaReportes = 'PRE_NOMINA' | 'EQUIDAD' | 'BANCO_HORAS' | 'AUSEN
                   <th title="Horas Ordinarias Nocturnas en días hábiles (según empresa)">HON {{ etiquetaRecargoColumna('nocturno') }}</th>
                   <th title="Horas Dominicales/Festivas Diurnas (según recargo de cada empresa)">HDFD {{ etiquetaRecargoColumna('dominical') }}</th>
                   <th title="Horas Dominicales/Festivas Nocturnas (según recargo dominical + nocturno de cada empresa)">HDFN {{ etiquetaRecargoColumna('nocturnoDominical') }}</th>
-                  <th title="Horas Extras CST causadas por exceso sobre la Meta Mensual (Modelo B: HED +25%, HEN +75%, HEFD, HEFN)">Extras CST</th>
+                  <th title="Tiempo adicional aprobado (prolongaciones y llamados DISP): sus recargos normales ya están integrados en HOD/HON/HDFD/HDFN y la hora ordinaria suma al Banco de Horas (RN-BH01)">Tiempo Adic.</th>
                   <th>Total Mes</th>
                   <th>Dom (D+F) / Comp</th>
                   <th>VAC / INC / LIC / FAM</th>
@@ -260,11 +260,9 @@ export type SubVistaReportes = 'PRE_NOMINA' | 'EQUIDAD' | 'BANCO_HORAS' | 'AUSEN
                     <td class="font-mono" [title]="'Recargo nocturno aplicado: ' + pct(r.recargos?.nocturno ?? normativa.recargos.nocturno)">{{ r.hon }}h</td>
                     <td class="font-mono" [title]="'Recargo dominical/festivo aplicado: ' + pct(r.recargos?.dominical ?? normativa.recargos.dominical)">{{ r.hdfd }}h</td>
                     <td class="font-mono" [title]="'Recargo nocturno dom/fest aplicado: ' + pct(r.recargos?.nocturnoDominical ?? normativa.recargos.nocturnoDominical)">{{ r.hdfn }}h</td>
-                    <td class="font-mono" [title]="'HED (+25%): ' + (r.hed ?? 0) + 'h • HEN (+75%): ' + (r.hen ?? 0) + 'h • HEFD: ' + (r.hefd ?? 0) + 'h • HEFN: ' + (r.hefn ?? 0) + 'h (Adicionales aprobadas: ' + (r.horasAdicionalesAprobadas ?? 0) + 'h)'">
-                      @if ((r.horasExtrasTotales ?? 0) > 0) {
-                        <strong class="text-pos">+{{ r.horasExtrasTotales }}h ⚡</strong>
-                      } @else if ((r.horasAdicionalesAprobadas ?? 0) > 0) {
-                        <span class="text-muted">0h <small>(+{{ r.horasAdicionalesAprobadas }}h niv)</small></span>
+                    <td class="font-mono" [title]="'Tiempo adicional aprobado (prolongaciones y llamados DISP): +' + (r.horasAdicionalesAprobadas ?? 0) + 'h (Recargos integrados en HOD/HON/HDFD/HDFN y hora ordinaria en Banco de Horas)'">
+                      @if ((r.horasAdicionalesAprobadas ?? 0) > 0) {
+                        <strong class="text-pos">+{{ r.horasAdicionalesAprobadas }}h ⚡</strong>
                       } @else {
                         <span>0h</span>
                       }

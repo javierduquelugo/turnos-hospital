@@ -1546,11 +1546,16 @@ export class CuadranteStore {
     const anio = this.catalogos.anioSeleccionado();
     const mes = this.catalogos.mesSeleccionado();
 
-    const syncEmpleados$ = this.catalogos.esAdminTh()
+    const syncEmpleados$ = this.catalogos.puedeConfiguracionAdmin()
       ? this.api
           .sincronizarEmpleadosIntranet()
           .pipe(catchError(() => of({ ok: false, creados: 0, actualizados: 0, empresasPendientes: [] })))
       : of({ ok: false, creados: 0, actualizados: 0, empresasPendientes: [] });
+
+    const syncNovedades$ = () =>
+      this.catalogos.puedeEditarCuadrante()
+        ? this.api.sincronizarNovedadesIntranet(anio, mes)
+        : of({ ok: true, totalSincronizadas: 0, celdasBloqueadas: 0, novedades: [] });
 
     let empresasPendientesDetectadas: Array<{ codigo: string; nombre: string; recienCreada?: boolean }> = [];
 
@@ -1581,9 +1586,9 @@ export class CuadranteStore {
                 map((empsDb) => this.catalogos.aplicarEmpleadosDesdeDb(empsDb)),
                 catchError(() => of(null))
               ),
-            ]).pipe(concatMap(() => this.api.sincronizarNovedadesIntranet(anio, mes)));
+            ]).pipe(concatMap(() => syncNovedades$()));
           }
-          return this.api.sincronizarNovedadesIntranet(anio, mes);
+          return syncNovedades$();
         }),
         concatMap((resNov) => {
           if (resNov && resNov.ok) {
@@ -1755,7 +1760,7 @@ export class CuadranteStore {
   }
 
   deshacerUltimaAccion(): void {
-    if (this.catalogos.esColaborador()) return;
+    if (this.catalogos.esColaborador() || !this.catalogos.puedeEditarCuadrante()) return;
     if (this.estadoCuadrante() === 'CERRADO_NOMINA') {
       this.notificacion.mostrar('⛔ El cuadro de turnos está CERRADO para Nómina.');
       return;
@@ -1923,7 +1928,7 @@ export class CuadranteStore {
   }
 
   rehacerUltimaAccion(): void {
-    if (this.catalogos.esColaborador()) return;
+    if (this.catalogos.esColaborador() || !this.catalogos.puedeEditarCuadrante()) return;
     if (this.estadoCuadrante() === 'CERRADO_NOMINA') {
       this.notificacion.mostrar('⛔ El cuadro de turnos está CERRADO para Nómina.');
       return;
@@ -2290,6 +2295,10 @@ export class CuadranteStore {
     origen: string,
     opciones?: { origenAccion?: string; justificacion?: string }
   ): void {
+    if (this.catalogos.esColaborador() || !this.catalogos.puedeEditarCuadrante()) {
+      this.notificacion.mostrar('🔒 Modo lectura: se requiere el permiso TurnosCuadranteEditar para modificar turnos.');
+      return;
+    }
     if (this.estadoCuadrante() === 'CERRADO_NOMINA') {
       this.notificacion.mostrar('⛔ El cuadro de turnos está CERRADO para Nómina. Reábrelo para editar.');
       return;
@@ -2430,6 +2439,9 @@ export class CuadranteStore {
           esRotacion: esRotacionBase,
           servicioEjecutorId: srvId,
           ...(celdaSig?.nota ? { nota: celdaSig.nota } : {}),
+          ...(celdaSig?.horasAdicionalesAprobadas ? { horasAdicionalesAprobadas: celdaSig.horasAdicionalesAprobadas } : {}),
+          ...(celdaSig?.solicitudesPendientesCount ? { solicitudesPendientesCount: celdaSig.solicitudesPendientesCount } : {}),
+          ...(celdaSig?.tramosAdicionales ? { tramosAdicionales: celdaSig.tramosAdicionales } : {}),
         };
         seAutoAsignoSaliente = true;
       }
@@ -2516,11 +2528,7 @@ export class CuadranteStore {
       );
     }
 
-    const persistenciaObs = necesitaIniciarBorrador
-      ? this.api
-          .actualizarEstadoCuadrante({ servicioId: srvId, anio, mes, estado: 'BORRADOR' })
-          .pipe(concatMap(() => forkJoin(guardCalls)))
-      : forkJoin(guardCalls);
+    const persistenciaObs = forkJoin(guardCalls);
 
     persistenciaObs.subscribe({
       next: () => {
@@ -2548,7 +2556,7 @@ export class CuadranteStore {
   }
 
   revertirCeldaAPrevisto(empId: string, dia: number, justificacion?: string): void {
-    if (this.catalogos.esColaborador()) return;
+    if (this.catalogos.esColaborador() || !this.catalogos.puedeEditarCuadrante()) return;
     const celdaActual = this.asignaciones()[empId]?.[dia];
     if (!celdaActual || celdaActual.previsto === undefined) {
       this.notificacion.mostrar('ℹ️ Esta celda aún no tiene un turno oficial previsto registrado.');
@@ -2572,7 +2580,7 @@ export class CuadranteStore {
   }
 
   guardarNotaCelda(empId: string, dia: number, notaRaw: string): void {
-    if (this.catalogos.esColaborador()) return;
+    if (this.catalogos.esColaborador() || !this.catalogos.puedeEditarCuadrante()) return;
     if (this.estadoCuadrante() === 'CERRADO_NOMINA') {
       this.notificacion.mostrar('⛔ El cuadro de turnos está CERRADO para Nómina. Reábrelo para editar notas.');
       return;
@@ -2659,7 +2667,7 @@ export class CuadranteStore {
     fijadaDestino?: boolean,
     justificacion?: string
   ): void {
-    if (this.catalogos.esColaborador()) return;
+    if (this.catalogos.esColaborador() || !this.catalogos.puedeEditarCuadrante()) return;
     if (this.estadoCuadrante() === 'CERRADO_NOMINA') {
       this.notificacion.mostrar('⛔ El cuadro de turnos está CERRADO para Nómina. Reábrelo para fijar/desbloquear.');
       return;
@@ -2751,7 +2759,7 @@ export class CuadranteStore {
   }
 
   cambiarBreakCelda(empId: string, dia: number, tandaOrden: number | null): void {
-    if (this.catalogos.esColaborador()) return;
+    if (this.catalogos.esColaborador() || !this.catalogos.puedeEditarCuadrante()) return;
     if (this.estadoCuadrante() === 'CERRADO_NOMINA') {
       this.notificacion.mostrar('⛔ El cuadro de turnos está CERRADO para Nómina. Reábrelo para editar breaks.');
       return;
@@ -2854,7 +2862,7 @@ export class CuadranteStore {
   }
 
   rebalancearBreaksDia(dia: number, codigoTurnoFiltro?: string): void {
-    if (this.catalogos.esColaborador()) return;
+    if (this.catalogos.esColaborador() || !this.catalogos.puedeEditarCuadrante()) return;
     if (this.estadoCuadrante() === 'CERRADO_NOMINA') {
       this.notificacion.mostrar('⛔ El cuadro de turnos está CERRADO para Nómina. Reábrelo para balancear breaks.');
       return;
@@ -2991,7 +2999,7 @@ export class CuadranteStore {
     codigoTurno?: CodigoTurno,
     justificacion?: string
   ): void {
-    if (this.catalogos.esColaborador()) return;
+    if (this.catalogos.esColaborador() || !this.catalogos.puedeEditarCuadrante()) return;
     if (this.estadoCuadrante() === 'CERRADO_NOMINA') {
       this.notificacion.mostrar('⛔ El cuadro de turnos está CERRADO para Nómina. Reábrelo para editar apoyo.');
       return;
@@ -3070,6 +3078,10 @@ export class CuadranteStore {
   }
 
   limpiarCuadranteCompleto(): void {
+    if (this.catalogos.esColaborador() || !this.catalogos.puedeEditarCuadrante()) {
+      this.notificacion.mostrar('🔒 Modo lectura: se requiere el permiso TurnosCuadranteEditar para limpiar el cuadrante.');
+      return;
+    }
     if (this.estadoCuadrante() === 'CERRADO_NOMINA') {
       this.notificacion.mostrar('⛔ El cuadro de turnos está CERRADO para Nómina. Reábrelo para editar.');
       return;
@@ -3152,6 +3164,9 @@ export class CuadranteStore {
           esRotacion: false,
           servicioEjecutorId: undefined,
           ...(celda.nota ? { nota: celda.nota } : {}),
+          ...(celda.horasAdicionalesAprobadas ? { horasAdicionalesAprobadas: celda.horasAdicionalesAprobadas } : {}),
+          ...(celda.solicitudesPendientesCount ? { solicitudesPendientesCount: celda.solicitudesPendientesCount } : {}),
+          ...(celda.tramosAdicionales ? { tramosAdicionales: celda.tramosAdicionales } : {}),
         };
         loteParaDb.push({
           empleadoId: emp.id,
@@ -3225,6 +3240,10 @@ export class CuadranteStore {
   }
 
   ejecutarAutocompletarHuecos(): void {
+    if (this.catalogos.esColaborador() || !this.catalogos.puedeEditarCuadrante()) {
+      this.notificacion.mostrar('🔒 Modo lectura: se requiere el permiso TurnosCuadranteEditar para autocompletar.');
+      return;
+    }
     if (this.estadoCuadrante() === 'CERRADO_NOMINA') {
       this.notificacion.mostrar('⛔ El cuadro de turnos está CERRADO para Nómina. Reábrelo para editar.');
       return;
@@ -3287,11 +3306,7 @@ export class CuadranteStore {
         justificacion: '✨ Autocompletado inteligente de huecos',
         celdas: resultado.loteParaDb,
       };
-      const guardarObs = necesitaIniciarBorrador
-        ? this.api
-            .actualizarEstadoCuadrante({ servicioId: srvId, anio, mes, estado: 'BORRADOR' })
-            .pipe(concatMap(() => this.api.guardarLoteCuadrante(lotePayload)))
-        : this.api.guardarLoteCuadrante(lotePayload);
+      const guardarObs = this.api.guardarLoteCuadrante(lotePayload);
 
       guardarObs.subscribe({
         next: () => {
@@ -3319,10 +3334,12 @@ export class CuadranteStore {
 
   // Personal de Apoyo y Rotación Inter-Servicios
   abrirModalRotacion(): void {
+    if (!this.catalogos.puedeEditarCuadrante()) return;
     this.modalRotacionAbierto.set(true);
   }
 
   vincularRotacionAlCuadrante(cand: EmpleadoHospital): void {
+    if (!this.catalogos.puedeEditarCuadrante()) return;
     const srvId = this.catalogos.servicioSeleccionadoId();
     const mapaRot = { ...this.empleadosRotadosPorServicio() };
     const listaActual = mapaRot[srvId] || [];
@@ -3338,6 +3355,7 @@ export class CuadranteStore {
   }
 
   vincularTodoEquipoApoyo(): void {
+    if (!this.catalogos.puedeEditarCuadrante()) return;
     const cands = this.candidatosRotacionHomologos();
     if (cands.length === 0) return;
 
@@ -3357,6 +3375,7 @@ export class CuadranteStore {
   }
 
   quitarPersonalApoyo(empId: string): void {
+    if (!this.catalogos.puedeEditarCuadrante()) return;
     const srvId = this.catalogos.servicioSeleccionadoId();
     const empObj = this.catalogos.empleados().find((e) => e.id === empId);
     const actualMap = { ...this.asignaciones() };
@@ -3407,6 +3426,9 @@ export class CuadranteStore {
             esRotacion: false,
             servicioEjecutorId: undefined,
             ...(celda.nota ? { nota: celda.nota } : {}),
+            ...(celda.tramosAdicionales?.length ? { tramosAdicionales: celda.tramosAdicionales } : {}),
+            ...(celda.horasAdicionalesAprobadas ? { horasAdicionalesAprobadas: celda.horasAdicionalesAprobadas } : {}),
+            ...(celda.solicitudesPendientesCount ? { solicitudesPendientesCount: celda.solicitudesPendientesCount } : {}),
           };
           loteLimpiar.push({
             empleadoId: empId,
@@ -3471,12 +3493,20 @@ export class CuadranteStore {
     }
 
     const actual = this.estadoCuadrante();
-    if (this.catalogos.esCoordinador() && actual === 'PUBLICADO') {
-      this.notificacion.mostrar('⛔ El Cierre para Nómina está reservado exclusivamente al perfil de Talento Humano / Nómina.');
+    if (!this.catalogos.puedeGestionarNomina() && actual === 'PUBLICADO') {
+      this.notificacion.mostrar('⛔ El Cierre para Nómina requiere el permiso TurnosNominaGestionar.');
       return;
     }
-    if (this.catalogos.esCoordinador() && actual === 'CERRADO_NOMINA') {
-      this.notificacion.mostrar('⛔ Este mes ya fue cerrado para Nómina. Solo Talento Humano puede reabrirlo.');
+    if (!this.catalogos.puedeGestionarNomina() && actual === 'CERRADO_NOMINA') {
+      this.notificacion.mostrar('⛔ Este mes ya fue cerrado para Nómina. Solo el permiso TurnosNominaGestionar puede reabrirlo.');
+      return;
+    }
+    if (
+      (actual === 'SIN_PLANIFICAR' || actual === 'BORRADOR') &&
+      !this.catalogos.puedeEditarCuadrante() &&
+      !this.catalogos.puedeConfiguracionAdmin()
+    ) {
+      this.notificacion.mostrar('⛔ Iniciar o publicar el cuadrante requiere el permiso TurnosCuadranteEditar.');
       return;
     }
 
@@ -3573,7 +3603,10 @@ export class CuadranteStore {
         mes,
         estado: nuevoEstado,
         saldosConsolidados,
-      })
+        ...(actual === 'SIN_PLANIFICAR' && nuevoEstado === 'BORRADOR'
+          ? { iniciarBorrador: true }
+          : {}),
+      } as any)
       .subscribe({
         next: () => {
           this.notificacion.mostrar(msgExito);
@@ -3590,8 +3623,8 @@ export class CuadranteStore {
   }
 
   revertirCuadranteABorrador(): void {
-    if (!this.catalogos.esAdminTh()) {
-      this.notificacion.mostrar('⛔ Solo Talento Humano puede devolver un cuadrante publicado a estado Borrador.');
+    if (!this.catalogos.puedeGestionarNomina()) {
+      this.notificacion.mostrar('⛔ Solo el permiso TurnosNominaGestionar puede devolver un cuadrante publicado a estado Borrador.');
       return;
     }
     if (this.estadoCuadrante() !== 'PUBLICADO') {
@@ -3644,7 +3677,7 @@ export class CuadranteStore {
     const mes = this.catalogos.mesSeleccionado();
     const srvActual = this.catalogos.servicioActual();
     const encabezadosDias = dias.map((d) => `Dia_${d.dia}`).join(';');
-    const header = `Periodo;Documento;Colaborador;Cargo;Empresa;Regimen_Semanal_H;Servicio;Dias_Habiles_Mes;Dias_Habiles_Prorrateados;Meta_Nominal_H;Prorrateo_H;Meta_Neta_H;HOD;HON;HDFD;HDFN;HED_25;HEN_75;HEFD;HEFN;Extras_CST_Total;Horas_Trabajadas;Amortizadas_COMP_H;Recargo_Nocturno_Pct;Recargo_Dominical_Festivo_Pct;Recargo_Nocturno_Dominical_Festivo_Pct;Domingos_Laborados;Dom_Fest_Laborados;Compensatorio_Causado;Dias_VAC;Dias_INC;Dias_LIC;Dias_FAM;Saldo_Banco_Anterior;Diferencia_Mes;Nuevo_Saldo_Banco;${encabezadosDias}`;
+    const header = `Periodo;Documento;Colaborador;Cargo;Empresa;Regimen_Semanal_H;Servicio;Dias_Habiles_Mes;Dias_Habiles_Prorrateados;Meta_Nominal_H;Prorrateo_H;Meta_Neta_H;HOD;HON;HDFD;HDFN;Tiempo_Adicional_Aprobado_H;Horas_Trabajadas;Amortizadas_COMP_H;Recargo_Nocturno_Pct;Recargo_Dominical_Festivo_Pct;Recargo_Nocturno_Dominical_Festivo_Pct;Domingos_Laborados;Dom_Fest_Laborados;Compensatorio_Causado;Dias_VAC;Dias_INC;Dias_LIC;Dias_FAM;Saldo_Banco_Anterior;Diferencia_Mes;Nuevo_Saldo_Banco;${encabezadosDias}`;
     const periodoCsv = `${anio}-${String(mes).padStart(2, '0')}`;
 
     const lineas = filas.map((f) => {
@@ -3666,11 +3699,7 @@ export class CuadranteStore {
         numeroCsv(f.hon),
         numeroCsv(f.hdfd),
         numeroCsv(f.hdfn),
-        numeroCsv(f.hed ?? 0),
-        numeroCsv(f.hen ?? 0),
-        numeroCsv(f.hefd ?? 0),
-        numeroCsv(f.hefn ?? 0),
-        numeroCsv(f.horasExtrasTotales ?? 0),
+        numeroCsv(f.horasAdicionalesAprobadas ?? 0),
         numeroCsv(f.horasTrabajadas),
         numeroCsv(f.horasAmortizadasComp),
         formatearPorcentaje(f.recargos.nocturno),

@@ -6,8 +6,11 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import {
+  derivarRolDesdePermisos,
   firmarJwtHmac,
   PayloadTokenSsoIntranet,
+  PermisoTurnosSso,
+  resolverPermisosSso,
   verificarJwtHmac,
 } from './jwt-sso.util';
 
@@ -39,12 +42,19 @@ export class SsoRoleGuard implements CanActivate {
         : '';
 
     let payload: (PayloadTokenSsoIntranet & { empleadoId?: string; nombre?: string }) | null = null;
+    let permisos: PermisoTurnosSso[] = [];
     if (token) {
       payload = verificarJwtHmac<PayloadTokenSsoIntranet & { empleadoId?: string; nombre?: string }>(
         token,
         this.obtenerSecret()
       );
-      req.usuarioSso = payload;
+      permisos = resolverPermisosSso(payload.rol, payload.permisos as string[] | undefined);
+      const rolEfectivo = derivarRolDesdePermisos(permisos, payload.rol);
+      req.usuarioSso = {
+        ...payload,
+        rol: rolEfectivo,
+        permisos,
+      };
 
       // Renovación deslizante (Sliding Session): si quedan menos de 2 horas (< 7200s), emitir token renovado por 8h
       const now = Math.floor(Date.now() / 1000);
@@ -54,7 +64,8 @@ export class SsoRoleGuard implements CanActivate {
             documento: payload.documento,
             empleadoId: payload.empleadoId,
             nombre: payload.nombre,
-            rol: payload.rol,
+            rol: rolEfectivo,
+            permisos,
             serviciosCoordinados: payload.serviciosCoordinados,
           },
           this.obtenerSecret(),
@@ -81,15 +92,13 @@ export class SsoRoleGuard implements CanActivate {
       );
     }
 
-    const rol = payload.rol;
+    const tieneConfigAdmin = permisos.includes('TurnosConfiguracionAdmin');
+    const tieneNomina = permisos.includes('TurnosNominaGestionar');
+    const tieneEditarCuadrante = permisos.includes('TurnosCuadranteEditar');
+    const tieneConsultaGlobal = permisos.includes('TurnosConsultaGlobal');
 
-    // 5. Reglas de autorización por Rol en Backend
-    if (rol === 'ADMIN_TH') {
-      return true;
-    }
-
-    if (rol === 'COLABORADOR') {
-      // El colaborador tiene acceso de solo lectura para consultar su calendario, compañeros y servicios
+    // 5. Sin ninguno de los 4 permisos especiales -> Perfil Base Colaborador
+    if (!tieneConfigAdmin && !tieneNomina && !tieneEditarCuadrante && !tieneConsultaGlobal) {
       if (method === 'GET' || method === 'HEAD') {
         return true;
       }
@@ -109,30 +118,75 @@ export class SsoRoleGuard implements CanActivate {
       return true;
     }
 
-    if (rol === 'COORDINADOR') {
-      // Coordinador no puede modificar configuración global (empresas, servicios-admin, catálogo de turnos, festivos ni recálculo global)
-      if (
-        url.includes('/api/v1/empresas') ||
-        url.includes('/api/v1/servicios-admin') ||
-        url.includes('/api/v1/festivos') ||
-        url.includes('/api/v1/liquidacion')
-      ) {
+    // 6. Administración Global (empresas, servicios-admin, catálogo de turnos, festivos) exige TurnosConfiguracionAdmin
+    if (
+      url.includes('/api/v1/empresas') ||
+      url.includes('/api/v1/servicios-admin') ||
+      url.includes('/api/v1/festivos') ||
+      url.includes('/api/v1/liquidacion')
+    ) {
+      if (!tieneConfigAdmin && !(tieneNomina && url.includes('/api/v1/liquidacion'))) {
         throw new ForbiddenException(
-          'Acceso denegado: la administración global de empresas, servicios, turnos, festivos y recálculo normativo está reservada a Talento Humano (ADMIN_TH).'
+          'Acceso denegado: la administración global de empresas, servicios, turnos y festivos requiere el permiso TurnosConfiguracionAdmin.'
         );
       }
+      return true;
+    }
 
-      // Coordinador puede publicar (BORRADOR -> PUBLICADO), pero no cerrar Nómina (CERRADO_NOMINA)
-      if (url.endsWith('/api/v1/cuadrantes/estado')) {
-        const nuevoEstado = req.body?.estado;
-        if (nuevoEstado === 'CERRADO_NOMINA' || nuevoEstado === 'BORRADOR') {
+    // 7. Cierre y Reapertura de Nómina exige TurnosNominaGestionar (o TurnosConfiguracionAdmin)
+    if (
+      url.includes('/api/v1/banco-horas-nomina/cerrar') ||
+      url.includes('/api/v1/banco-horas-nomina/reabrir')
+    ) {
+      if (!tieneNomina && !tieneConfigAdmin) {
+        throw new ForbiddenException(
+          'Acceso denegado: el cierre y reapertura de Nómina requieren el permiso TurnosNominaGestionar.'
+        );
+      }
+      return true;
+    }
+
+    if (url.endsWith('/api/v1/cuadrantes/estado')) {
+      const nuevoEstado = req.body?.estado;
+      const esInicioBorrador = nuevoEstado === 'BORRADOR' && req.body?.iniciarBorrador === true;
+      if (nuevoEstado === 'CERRADO_NOMINA' || (nuevoEstado === 'BORRADOR' && !esInicioBorrador)) {
+        if (!tieneNomina && !tieneConfigAdmin) {
           throw new ForbiddenException(
-            'Acceso denegado: el cierre y reapertura de Nómina están reservados exclusivamente a Talento Humano (ADMIN_TH).'
+            'Acceso denegado: el cierre y reapertura de Nómina están reservados al permiso TurnosNominaGestionar.'
           );
         }
+        return true;
       }
+      if (!tieneEditarCuadrante && !tieneConfigAdmin && !(tieneNomina && nuevoEstado === 'PUBLICADO')) {
+        throw new ForbiddenException(
+          'Acceso denegado: publicar o iniciar el cuadrante requiere el permiso TurnosCuadranteEditar.'
+        );
+      }
+    }
 
-      // Verificar alcance de servicios permitidos para el Coordinador
+    // 8. Acciones propias de colaborador siempre permitidas para cualquier usuario autenticado
+    const esAccionPropiaColaborador =
+      (method === 'POST' && url.endsWith('/api/v1/permutas')) ||
+      (method === 'PATCH' && (url.endsWith('/aceptar-par') || url.endsWith('/rechazar-par'))) ||
+      (method === 'POST' && url.endsWith('/api/v1/tiempo-adicional'));
+
+    // 9. Edición de cuadrantes y aprobación de solicitudes exige TurnosCuadranteEditar (o TurnosConfiguracionAdmin)
+    const esReaperturaNomina =
+      tieneNomina && url.endsWith('/api/v1/cuadrantes/estado') && req.body?.estado === 'PUBLICADO';
+    if (!esAccionPropiaColaborador && !esReaperturaNomina && !tieneEditarCuadrante && !tieneConfigAdmin) {
+      throw new ForbiddenException(
+        'Acceso denegado: tu perfil tiene permiso de consulta/nómina, pero modificar cuadrantes o aprobar solicitudes requiere el permiso TurnosCuadranteEditar.'
+      );
+    }
+
+    // 10. Para ediciones de cuadrante sin TurnosConfiguracionAdmin (y fuera de cierres/reaperturas de nómina), verificar alcance de serviciosCoordinados
+    const esAccionGlobalNomina =
+      tieneNomina &&
+      (url.endsWith('/api/v1/cuadrantes/estado') ||
+        url.includes('/api/v1/banco-horas-nomina') ||
+        url.includes('/api/v1/liquidacion'));
+
+    if (!tieneConfigAdmin && !esAccionGlobalNomina && !esAccionPropiaColaborador) {
       const srvIdBody = req.body?.servicioId;
       if (
         srvIdBody &&
@@ -155,8 +209,6 @@ export class SsoRoleGuard implements CanActivate {
           `Acceso denegado: no tienes permisos de coordinación sobre el servicio destino "${srvDestinoBody}".`
         );
       }
-
-      return true;
     }
 
     return true;

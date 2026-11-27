@@ -223,17 +223,40 @@ const HTML_PORTAL = `<!DOCTYPE html>
           <select id="selEmpleado"></select>
         </div>
         <div>
-          <label>Rol en el Token JWT:</label>
-          <select id="selRol">
-            <option value="COLABORADOR">COLABORADOR (Mi Calendario)</option>
-            <option value="COORDINADOR">COORDINADOR (Jefe de Servicio)</option>
-            <option value="ADMIN_TH">ADMIN_TH (Talento Humano / Nómina)</option>
+          <label>Perfil / Plantilla en el Token JWT:</label>
+          <select id="selRol" onchange="sincronizarPermisosPorPerfil()">
+            <option value="COLABORADOR">Colaborador Base (Sin permisos extra)</option>
+            <option value="COORDINADOR">Coordinador (TurnosCuadranteEditar)</option>
+            <option value="AUDITOR">Auditor / Calidad (TurnosConsultaGlobal)</option>
+            <option value="NOMINA">Analista Nómina (TurnosNominaGestionar)</option>
+            <option value="ADMIN_TH">Talento Humano / Admin (Todos los 4 permisos)</option>
           </select>
         </div>
         <div>
           <button class="btn-quick" style="padding: 10px 20px;" onclick="lanzarSeleccionado()">
             🔐 Firmar JWT y Abrir Rafa Turnos
           </button>
+        </div>
+      </div>
+      <div style="margin-top: 14px; padding: 12px 14px; background: #0f172a; border: 1px solid #334155; border-radius: 8px;">
+        <label style="margin-bottom: 8px; color: #38bdf8;">🔑 Permisos de la Intranet incluidos en el payload JWT (<code>permisos: string[]</code>):</label>
+        <div style="display: flex; flex-wrap: wrap; gap: 16px; font-size: 12.5px; color: #e2e8f0;">
+          <label style="display: flex; align-items: center; gap: 6px; margin: 0; cursor: pointer;">
+            <input type="checkbox" class="chk-permiso" value="TurnosCuadranteEditar" style="width: auto;" />
+            <code>TurnosCuadranteEditar</code> (Planificar y Aprobar)
+          </label>
+          <label style="display: flex; align-items: center; gap: 6px; margin: 0; cursor: pointer;">
+            <input type="checkbox" class="chk-permiso" value="TurnosConsultaGlobal" style="width: auto;" />
+            <code>TurnosConsultaGlobal</code> (Ver todo el hospital)
+          </label>
+          <label style="display: flex; align-items: center; gap: 6px; margin: 0; cursor: pointer;">
+            <input type="checkbox" class="chk-permiso" value="TurnosNominaGestionar" style="width: auto;" />
+            <code>TurnosNominaGestionar</code> (Cerrar / Reabrir Nómina)
+          </label>
+          <label style="display: flex; align-items: center; gap: 6px; margin: 0; cursor: pointer;">
+            <input type="checkbox" class="chk-permiso" value="TurnosConfiguracionAdmin" style="width: auto;" />
+            <code>TurnosConfiguracionAdmin</code> (Servicios, Personal, Turnos, Empresas)
+          </label>
         </div>
       </div>
       <div id="tokenBox" class="token-preview">
@@ -286,11 +309,46 @@ const HTML_PORTAL = `<!DOCTYPE html>
       }
     }
 
-    async function emitirYRedirigir(documento, rol) {
+    function permisosPorPerfil(perfil) {
+      if (perfil === 'ADMIN_TH') {
+        return ['TurnosConfiguracionAdmin', 'TurnosNominaGestionar', 'TurnosCuadranteEditar', 'TurnosConsultaGlobal'];
+      }
+      if (perfil === 'NOMINA') {
+        return ['TurnosNominaGestionar', 'TurnosConsultaGlobal'];
+      }
+      if (perfil === 'AUDITOR') {
+        return ['TurnosConsultaGlobal'];
+      }
+      if (perfil === 'COORDINADOR') {
+        return ['TurnosCuadranteEditar'];
+      }
+      return [];
+    }
+
+    function sincronizarPermisosPorPerfil() {
+      const perfil = document.getElementById('selRol').value;
+      const lista = new Set(permisosPorPerfil(perfil));
+      document.querySelectorAll('.chk-permiso').forEach((chk) => {
+        chk.checked = lista.has(chk.value);
+      });
+    }
+
+    function obtenerPermisosSeleccionados() {
+      const activos = [];
+      document.querySelectorAll('.chk-permiso').forEach((chk) => {
+        if (chk.checked) activos.push(chk.value);
+      });
+      return activos;
+    }
+
+    async function emitirYRedirigir(documento, rol, permisos) {
+      const permisosEnviar = Array.isArray(permisos) ? permisos : permisosPorPerfil(rol);
+      const rolCompat =
+        rol === 'NOMINA' ? 'ADMIN_TH' : rol === 'AUDITOR' ? 'COORDINADOR' : rol;
       const res = await fetch('/emitir-token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ documento, rol })
+        body: JSON.stringify({ documento, rol: rolCompat, permisos: permisosEnviar })
       });
       const data = await res.json();
       if (data.redirectUrl) {
@@ -302,12 +360,13 @@ const HTML_PORTAL = `<!DOCTYPE html>
     function lanzarSeleccionado() {
       const doc = document.getElementById('selEmpleado').value;
       const rol = document.getElementById('selRol').value;
+      const permisos = obtenerPermisosSeleccionados();
       if (!doc) return;
-      emitirYRedirigir(doc, rol);
+      emitirYRedirigir(doc, rol, permisos);
     }
 
     function lanzarDirecto(documento, rol) {
-      emitirYRedirigir(documento, rol);
+      emitirYRedirigir(documento, rol, permisosPorPerfil(rol));
     }
 
     function lanzarRapido(rol) {
@@ -318,9 +377,10 @@ const HTML_PORTAL = `<!DOCTYPE html>
       } else if (rol === 'COLABORADOR') {
         candidato = empleados.find(e => (e.cargoNombre || '').includes('Auxiliar')) || empleados[1] || empleados[0];
       }
-      emitirYRedirigir(candidato.documento, rol);
+      emitirYRedirigir(candidato.documento, rol, permisosPorPerfil(rol));
     }
 
+    sincronizarPermisosPorPerfil();
     cargarDatos();
   </script>
 </body>
@@ -396,9 +456,12 @@ const server = http.createServer((req, res) => {
     req.on('data', (chunk) => (body += chunk));
     req.on('end', () => {
       try {
-        const { documento, rol } = JSON.parse(body || '{}');
+        const { documento, rol, permisos } = JSON.parse(body || '{}');
         const secret = leerSecretoCompartido();
-        const ssoToken = firmarJwtIntranet({ documento, rol }, secret, 300);
+        const payloadJwt = Array.isArray(permisos)
+          ? { documento, rol, permisos }
+          : { documento, rol };
+        const ssoToken = firmarJwtIntranet(payloadJwt, secret, 300);
         const redirectUrl = `${RAFA_TURNOS_FRONTEND_URL}/?sso_token=${encodeURIComponent(ssoToken)}`;
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify({ ssoToken, redirectUrl }));

@@ -44,14 +44,14 @@ export class PermutasAuditoriaStore {
     const sesion = this.catalogos.sesionActual();
     const srvActivo = this.catalogos.servicioSeleccionadoId();
 
-    if (sesion && sesion.rol === 'COLABORADOR') {
+    if (this.catalogos.esColaborador() && sesion) {
       return todas.filter(
         (p) => p.solicitanteId === sesion.empleadoId || p.receptorId === sesion.empleadoId
       );
     }
 
-    if (sesion && sesion.rol === 'COORDINADOR') {
-      const permitidos = new Set(sesion.serviciosPermitidosIds || [sesion.servicioBaseId]);
+    if (sesion && !this.catalogos.puedeConsultaGlobal() && sesion.rol === 'COORDINADOR') {
+      const permitidos = new Set(this.catalogos.serviciosVisibles().map((s) => s.id));
       return todas.filter((p) => p.servicioId === srvActivo && permitidos.has(p.servicioId));
     }
 
@@ -64,12 +64,12 @@ export class PermutasAuditoriaStore {
     const sesion = this.catalogos.sesionActual();
     const srvActivo = this.catalogos.servicioSeleccionadoId();
 
-    if (sesion && sesion.rol === 'COLABORADOR') {
+    if (this.catalogos.esColaborador() && sesion) {
       return todas.filter((s) => s.empleadoId === sesion.empleadoId);
     }
 
-    if (sesion && sesion.rol === 'COORDINADOR') {
-      const permitidos = new Set(sesion.serviciosPermitidosIds || [sesion.servicioBaseId]);
+    if (sesion && !this.catalogos.puedeConsultaGlobal() && sesion.rol === 'COORDINADOR') {
+      const permitidos = new Set(this.catalogos.serviciosVisibles().map((s) => s.id));
       return todas.filter((s) => s.servicioId === srvActivo && permitidos.has(s.servicioId));
     }
 
@@ -86,6 +86,9 @@ export class PermutasAuditoriaStore {
       return this.listaPermutas().filter(
         (p) => p.receptorId === sesion.empleadoId && p.estado === 'PENDIENTE_PAR'
       ).length;
+    }
+    if (!this.catalogos.puedeEditarCuadrante()) {
+      return 0;
     }
     const permPendientes = this.permutasVisiblesDashboard().filter(
       (p) => p.estado === 'PENDIENTE_SUPERVISOR'
@@ -118,16 +121,20 @@ export class PermutasAuditoriaStore {
     fechaFin?: string;
     incluirBorrador?: boolean;
   }): Observable<RegistroAuditoria[]> {
-    const permitidos = new Set(this.catalogos.serviciosVisibles().map((s) => s.id));
+    const permitidosInit = new Set([
+      ...this.catalogos.serviciosVisibles().map((s) => s.id),
+      ...(this.catalogos.sesionActual()?.serviciosPermitidosIds || []),
+    ]);
+    const esGlobal = this.catalogos.esAdminTh() || this.catalogos.puedeConsultaGlobal();
     let srvId =
       filtros?.servicioId !== undefined
         ? filtros.servicioId
-        : this.catalogos.esAdminTh()
+        : esGlobal
           ? 'TODOS'
           : this.catalogos.servicioSeleccionadoId();
 
-    if (!this.catalogos.esAdminTh() && srvId === 'TODOS' && permitidos.size === 1) {
-      srvId = Array.from(permitidos)[0];
+    if (!esGlobal && srvId === 'TODOS' && permitidosInit.size === 1) {
+      srvId = Array.from(permitidosInit)[0];
     }
 
     return this.api
@@ -143,9 +150,15 @@ export class PermutasAuditoriaStore {
       .pipe(
         map((logs) => {
           const lista = Array.isArray(logs) ? logs : [];
-          const filtrados = this.catalogos.esAdminTh()
-            ? lista
-            : lista.filter((l) => Boolean(l.servicioId && permitidos.has(l.servicioId)));
+          const permitidosActual = new Set([
+            ...this.catalogos.serviciosVisibles().map((s) => s.id),
+            ...(this.catalogos.sesionActual()?.serviciosPermitidosIds || []),
+          ]);
+          const tieneGlobalActual = this.catalogos.esAdminTh() || this.catalogos.puedeConsultaGlobal();
+          const filtrados =
+            tieneGlobalActual || permitidosActual.size === 0
+              ? lista
+              : lista.filter((l) => Boolean(l.servicioId && permitidosActual.has(l.servicioId)));
           this.bitacoraAuditoria.set(filtrados);
           try {
             localStorage.removeItem('rafa_turnos_auditoria');
@@ -432,6 +445,7 @@ export class PermutasAuditoriaStore {
   }
 
   aprobarPermuta(idPermuta: string): void {
+    if (!this.catalogos.puedeEditarCuadrante()) return;
     const perm = this.listaPermutas().find((p) => p.id === idPermuta);
     if (!perm) return;
 
@@ -448,11 +462,26 @@ export class PermutasAuditoriaStore {
               const mapaPeriodo = { ...(copia[key] || {}) };
               const fila = { ...(mapaPeriodo[c.empleadoId] || {}) };
               const anterior = fila[c.dia];
+              const cfgNuevo = this.catalogos.catalogoTurnosMap()[c.codigo];
+              const conservaBreak = Boolean(cfgNuevo?.recesoHabilitado && !cfgNuevo?.esAusencia);
+              const {
+                breakTandaOrden: _oldOrd,
+                breakInicio: _oldIni,
+                breakFin: _oldFin,
+                ...restoAnt
+              } = anterior || ({} as CeldaAsignacion);
               fila[c.dia] = {
-                ...anterior,
+                ...restoAnt,
                 codigo: c.codigo as CodigoTurno,
                 previsto: anterior?.previsto ?? anterior?.codigo ?? '',
                 servicioEjecutorId: perm.servicioId,
+                ...(conservaBreak && anterior?.breakInicio && anterior?.breakFin
+                  ? {
+                      breakTandaOrden: anterior.breakTandaOrden,
+                      breakInicio: anterior.breakInicio,
+                      breakFin: anterior.breakFin,
+                    }
+                  : {}),
               };
               mapaPeriodo[c.empleadoId] = fila;
               copia[key] = mapaPeriodo;
@@ -477,6 +506,7 @@ export class PermutasAuditoriaStore {
   }
 
   rechazarPermuta(data: string | { id: string; motivo?: string }): void {
+    if (!this.catalogos.puedeEditarCuadrante()) return;
     const idPermuta = typeof data === 'string' ? data : data.id;
     const motivo = (typeof data === 'object' && data.motivo?.trim())
       ? data.motivo.trim()
@@ -558,6 +588,7 @@ export class PermutasAuditoriaStore {
       motivoRechazo?: string;
     }
   ): void {
+    if (!this.catalogos.puedeEditarCuadrante()) return;
     this.api.resolverSolicitudTiempoAdicional(id, dto).subscribe({
       next: (resuelta) => {
         this.listaSolicitudesTiempoAdicional.set(

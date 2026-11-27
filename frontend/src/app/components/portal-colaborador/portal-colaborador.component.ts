@@ -526,7 +526,8 @@ export interface DatosEmpleadoPortal {
                       <span class="emp-extra-tag" [title]="'+' + celdaMia?.horasAdicionalesAprobadas + 'h adicionales aprobadas'">
                         +{{ celdaMia?.horasAdicionalesAprobadas }}h⚡
                       </span>
-                    } @else if ((celdaMia?.solicitudesPendientesCount || 0) > 0) {
+                    }
+                    @if ((celdaMia?.solicitudesPendientesCount || 0) > 0) {
                       <span class="emp-extra-pend-tag" title="Reporte de tiempo adicional en revisión">⏳</span>
                     }
                     @if (d.festivo) {
@@ -640,15 +641,13 @@ export interface DatosEmpleadoPortal {
                     🔒 {{ ctrlExtraSel?.motivoBloqueo }}
                   </span>
                 }
-                @if (diaSelInfo.celda?.codigo && diaSelInfo.celda?.codigo !== 'L') {
-                  <button
-                    type="button"
-                    class="btn-tool"
-                    (click)="abrirInspectorDiaPortal.emit(diaPermutaSeleccionado)"
-                    title="Ver historial de cambios de este día">
-                    ℹ️ Historial / Auditoría
-                  </button>
-                }
+                <button
+                  type="button"
+                  class="btn-tool"
+                  (click)="abrirInspectorDiaPortal.emit(diaPermutaSeleccionado)"
+                  title="Ver historial de cambios de este día">
+                  ℹ️ Historial / Auditoría
+                </button>
               </div>
             </div>
 
@@ -974,9 +973,23 @@ export interface DatosEmpleadoPortal {
                 <span>Turno en Cuadrante: <code>{{ turnoBaseExtraModal() }}</code></span>
               </div>
 
+              @let reportesPreviosModal = obtenerReportesActivosDia(diaExtraModal());
+              @if (reportesPreviosModal.length > 0) {
+                <div class="extra-modal-legal-info">
+                  📋 <strong>Tramos ya registrados en el Día {{ diaExtraModal() }} ({{ reportesPreviosModal.length }}):</strong>
+                  @for (rp of reportesPreviosModal; track rp.id) {
+                    <span>
+                      • <code>{{ rp.horaInicio }}–{{ rp.horaFin }}</code> (+{{ rp.horas }}h · {{ rp.estado === 'APROBADA' ? '✅ Aprobado' : '⏳ En revisión' }})
+                    </span>
+                  }
+                  <br />
+                  <small>Puedes registrar otro llamado o tramo adicional en este mismo día siempre que el horario no se cruce con los anteriores.</small>
+                </div>
+              }
+
               <div class="extra-modal-legal-info">
-                ⚖️ <strong>Liquidación Automática (Modelo B — Meta Mensual):</strong>
-                Una vez validado por tu Coordinador de Servicio, este tiempo se suma a tus horas trabajadas del mes. Si tienes déficit frente a tu meta mensual, nivela tu jornada ordinaria; todo lo que supere tu meta mensual se liquida automáticamente con los recargos CST de ley (+25% diurno, +75% nocturno o festivo).
+                ⚖️ <strong>Liquidación Automática (Banco de Horas + Recargos Normales):</strong>
+                Una vez validado por tu Coordinador de Servicio, la hora ordinaria se suma a tu <strong>Banco de Horas</strong> y en nómina se liquidan los recargos normales de la franja trabajada (nocturno, dominical o festivo).
               </div>
 
               <div class="extra-time-grid">
@@ -1333,8 +1346,19 @@ export class PortalColaboradorComponent implements AfterViewInit, OnChanges {
     this.errorValidacionModalExtra.set('');
 
     if (ctrl.tipo === 'DISPONIBILIDAD_LLAMADO') {
-      this.horaInicioExtra.set('02:00');
-      this.horaFinExtra.set('05:00');
+      const previos = this.obtenerReportesActivosDia(dia);
+      const candidatos: Array<[string, string]> = [
+        ['02:00', '05:00'],
+        ['09:00', '12:00'],
+        ['14:00', '17:00'],
+        ['20:00', '23:00'],
+      ];
+      const libre =
+        candidatos.find(
+          ([ini, fin]) => !previos.some((p) => this.seSolapanFranjasModal(ini, fin, p.horaInicio, p.horaFin))
+        ) || candidatos[0];
+      this.horaInicioExtra.set(libre[0]);
+      this.horaFinExtra.set(libre[1]);
       this.motivoCategoriaExtra.set('CIRUGIA_URGENCIA');
     } else if (cfg && cfg.horaFin && cfg.horaFin !== '00:00' && cfg.horaFin !== '23:59') {
       this.horaInicioExtra.set(cfg.horaFin);
@@ -1358,6 +1382,69 @@ export class PortalColaboradorComponent implements AfterViewInit, OnChanges {
     this.errorValidacionModalExtra.set('');
   }
 
+  obtenerReportesActivosDia(
+    dia: number
+  ): Array<{ id: string; horaInicio: string; horaFin: string; horas: number; estado: 'PENDIENTE_SUPERVISOR' | 'APROBADA' }> {
+    const mapa = new Map<
+      string,
+      { id: string; horaInicio: string; horaFin: string; horas: number; estado: 'PENDIENTE_SUPERVISOR' | 'APROBADA' }
+    >();
+
+    for (const s of this.misSolicitudesTiempoAdicional || []) {
+      if (
+        s.dia === dia &&
+        s.mes === this.mesSeleccionado &&
+        s.anio === this.anioSeleccionado &&
+        (s.estado === 'PENDIENTE_SUPERVISOR' || s.estado === 'APROBADA')
+      ) {
+        const key = `${s.horaInicio}-${s.horaFin}`;
+        mapa.set(key, {
+          id: s.id,
+          horaInicio: s.horaInicio,
+          horaFin: s.horaFin,
+          horas: Number(s.horasAprobadas ?? s.horasCalculadas) || 0,
+          estado: s.estado,
+        });
+      }
+    }
+
+    const celda = this.obtenerCeldaDia(dia);
+    for (const tr of celda?.tramosAdicionales || []) {
+      const key = `${tr.horaInicio}-${tr.horaFin}`;
+      if (!mapa.has(key)) {
+        mapa.set(key, {
+          id: tr.id,
+          horaInicio: tr.horaInicio,
+          horaFin: tr.horaFin,
+          horas: Number(tr.horasAprobadas) || 0,
+          estado: 'APROBADA',
+        });
+      }
+    }
+
+    return Array.from(mapa.values());
+  }
+
+  seSolapanFranjasModal(iniA: string, finA: string, iniB: string, finB: string): boolean {
+    const parseMin = (hhmm: string): number | null => {
+      const m = /^(\d{2}):(\d{2})$/.exec((hhmm || '').trim());
+      if (!m) return null;
+      return Number(m[1]) * 60 + Number(m[2]);
+    };
+    const sA = parseMin(iniA);
+    const dA = duracionHorarioMin(iniA, finA, false);
+    const sB = parseMin(iniB);
+    const dB = duracionHorarioMin(iniB, finB, false);
+    if (sA === null || dA === null || sB === null || dB === null) return false;
+    const eA = sA + dA;
+    const eB = sB + dB;
+    return (
+      Math.max(sA, sB) < Math.min(eA, eB) ||
+      Math.max(sA + 1440, sB) < Math.min(eA + 1440, eB) ||
+      Math.max(sA, sB + 1440) < Math.min(eA, eB + 1440)
+    );
+  }
+
   confirmarEnvioTiempoAdicional(): void {
     const hCalc = this.horasCalculadasModal;
     if (hCalc <= 0 || hCalc > 12) {
@@ -1370,6 +1457,17 @@ export class PortalColaboradorComponent implements AfterViewInit, OnChanges {
     if (detalle.length < 4) {
       this.errorValidacionModalExtra.set(
         'Por favor describe brevemente el procedimiento o motivo clínico.'
+      );
+      return;
+    }
+
+    const previosDia = this.obtenerReportesActivosDia(this.diaExtraModal());
+    const solapado = previosDia.find((p) =>
+      this.seSolapanFranjasModal(this.horaInicioExtra(), this.horaFinExtra(), p.horaInicio, p.horaFin)
+    );
+    if (solapado) {
+      this.errorValidacionModalExtra.set(
+        `La franja ${this.horaInicioExtra()}–${this.horaFinExtra()} se solapa con otro reporte de este mismo día (${solapado.horaInicio}–${solapado.horaFin}). Ajusta el horario para registrar el nuevo llamado.`
       );
       return;
     }

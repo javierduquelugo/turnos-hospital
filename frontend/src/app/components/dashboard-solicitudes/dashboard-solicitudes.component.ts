@@ -314,7 +314,7 @@ import { coincideBusquedaCampos, dividirTerminosBusqueda } from '../../utils/bus
                   @if (st.estado === 'PENDIENTE_SUPERVISOR') {
                     @if (!esColaborador) {
                       <div class="supervisor-approval-group">
-                        <span class="badge-concertada">⚖️ Modelo B (Meta Mensual)</span>
+                        <span class="badge-concertada">⚖️ Banco de Horas + Recargos (RN-BH01)</span>
                         <div class="btn-group-h">
                           <button
                             type="button"

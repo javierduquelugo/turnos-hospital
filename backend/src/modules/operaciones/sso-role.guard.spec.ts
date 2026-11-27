@@ -366,4 +366,133 @@ describe('SsoRoleGuard (RBAC + Sliding Session)', () => {
       .send({ servicioId: 'srv-urg', servicioDestinoId: 'srv-uci' })
       .expect(200);
   });
+
+  it('soporta tokens basados en los 4 permisos de Intranet (TurnosCuadranteEditar, TurnosConsultaGlobal, TurnosNominaGestionar, TurnosConfiguracionAdmin)', async () => {
+    // 1. Auditor con solo TurnosConsultaGlobal: puede leer (GET), pero no editar cuadrante ni cerrar nómina
+    const tokenAuditor = firmarJwtHmac(
+      { documento: '2020', permisos: ['TurnosConsultaGlobal'] },
+      SECRET,
+      3600
+    );
+    await request(app.getHttpServer())
+      .get('/api/v1/cuadrantes/estado-global')
+      .set('Authorization', `Bearer ${tokenAuditor}`)
+      .expect(200);
+    await request(app.getHttpServer())
+      .put('/api/v1/cuadrantes/celda')
+      .set('Authorization', `Bearer ${tokenAuditor}`)
+      .send({ servicioId: 'srv-urg' })
+      .expect(403);
+    await request(app.getHttpServer())
+      .put('/api/v1/cuadrantes/estado')
+      .set('Authorization', `Bearer ${tokenAuditor}`)
+      .send({ servicioId: 'srv-urg', estado: 'CERRADO_NOMINA' })
+      .expect(403);
+
+    // 2. Analista de Nómina con solo TurnosNominaGestionar: puede cerrar/reabrir nómina y recalcular liquidación, pero no editar celdas ni crear servicios
+    const tokenNomina = firmarJwtHmac(
+      { documento: '3030', permisos: ['TurnosNominaGestionar'] },
+      SECRET,
+      3600
+    );
+    await request(app.getHttpServer())
+      .put('/api/v1/cuadrantes/estado')
+      .set('Authorization', `Bearer ${tokenNomina}`)
+      .send({ servicioId: 'srv-urg', estado: 'CERRADO_NOMINA' })
+      .expect(200);
+    await request(app.getHttpServer())
+      .post('/api/v1/liquidacion/recalcular')
+      .set('Authorization', `Bearer ${tokenNomina}`)
+      .send({})
+      .expect(201);
+    await request(app.getHttpServer())
+      .put('/api/v1/cuadrantes/celda')
+      .set('Authorization', `Bearer ${tokenNomina}`)
+      .send({ servicioId: 'srv-urg' })
+      .expect(403);
+    await request(app.getHttpServer())
+      .post('/api/v1/servicios-admin')
+      .set('Authorization', `Bearer ${tokenNomina}`)
+      .send({})
+      .expect(403);
+
+    // 3. Coordinador con solo TurnosCuadranteEditar (sin campo rol explícito): puede editar sus servicios y aprobar permutas, pero no cerrar nómina
+    const tokenCoordPerm = firmarJwtHmac(
+      {
+        documento: '4040',
+        permisos: ['TurnosCuadranteEditar'],
+        serviciosCoordinados: ['srv-urg', 'srv-hosp'],
+      },
+      SECRET,
+      3600
+    );
+    await request(app.getHttpServer())
+      .put('/api/v1/cuadrantes/celda')
+      .set('Authorization', `Bearer ${tokenCoordPerm}`)
+      .send({ servicioId: 'srv-hosp' })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch('/api/v1/permutas/perm-1/aprobar')
+      .set('Authorization', `Bearer ${tokenCoordPerm}`)
+      .send({})
+      .expect(200);
+    await request(app.getHttpServer())
+      .put('/api/v1/cuadrantes/estado')
+      .set('Authorization', `Bearer ${tokenCoordPerm}`)
+      .send({ servicioId: 'srv-hosp', estado: 'CERRADO_NOMINA' })
+      .expect(403);
+    // Puede iniciar borrador desde SIN_PLANIFICAR con iniciarBorrador: true, pero no revertir sin flag
+    await request(app.getHttpServer())
+      .put('/api/v1/cuadrantes/estado')
+      .set('Authorization', `Bearer ${tokenCoordPerm}`)
+      .send({ servicioId: 'srv-hosp', estado: 'BORRADOR', iniciarBorrador: true })
+      .expect(200);
+    await request(app.getHttpServer())
+      .put('/api/v1/cuadrantes/estado')
+      .set('Authorization', `Bearer ${tokenCoordPerm}`)
+      .send({ servicioId: 'srv-hosp', estado: 'BORRADOR' })
+      .expect(403);
+
+    // 4. Coordinador con TurnosCuadranteEditar + TurnosConsultaGlobal: consulta todos los servicios, pero solo edita serviciosCoordinados (ALTO-03)
+    const tokenCoordConConsulta = firmarJwtHmac(
+      {
+        documento: '5050',
+        permisos: ['TurnosCuadranteEditar', 'TurnosConsultaGlobal'],
+        serviciosCoordinados: ['srv-urg'],
+      },
+      SECRET,
+      3600
+    );
+    await request(app.getHttpServer())
+      .put('/api/v1/cuadrantes/celda')
+      .set('Authorization', `Bearer ${tokenCoordConConsulta}`)
+      .send({ servicioId: 'srv-urg' })
+      .expect(200);
+    await request(app.getHttpServer())
+      .put('/api/v1/cuadrantes/celda')
+      .set('Authorization', `Bearer ${tokenCoordConConsulta}`)
+      .send({ servicioId: 'srv-uci' })
+      .expect(403);
+
+    // 5. Payload con permisos: [] explícitamente vacío ignora rol legado ADMIN_TH (CRIT-03)
+    const tokenPermisosVacios = firmarJwtHmac(
+      {
+        documento: '6060',
+        rol: 'ADMIN_TH',
+        permisos: [],
+      },
+      SECRET,
+      3600
+    );
+    await request(app.getHttpServer())
+      .post('/api/v1/servicios-admin')
+      .set('Authorization', `Bearer ${tokenPermisosVacios}`)
+      .send({})
+      .expect(403);
+    await request(app.getHttpServer())
+      .put('/api/v1/cuadrantes/celda')
+      .set('Authorization', `Bearer ${tokenPermisosVacios}`)
+      .send({ servicioId: 'srv-urg' })
+      .expect(403);
+  });
 });

@@ -56,7 +56,13 @@ Para garantizar una cobertura al 100% antes de iniciar la construcción técnica
   - ¿Con cuántos días de anticipación antes de fin de mes debe quedar publicado el cuadrante del mes siguiente? (ej. el día 20 o 25 del mes anterior).
   - ¿Existe un plazo límite para que los colaboradores soliciten permutas de turno? (ej. mínimo 24 o 48 horas antes de la ejecución del turno).
 
-### Punto H: Flujo de Aprobación de Guardias Médicas Especiales
-- **Escenario**: En servicios médicos críticos, a veces un especialista realiza una disponibilidad no presencial (llamada / retén domiciliario) en lugar de guardia física.
-- **Definición requerida**:
-  - ¿El hospital maneja turnos de "Disponibilidad Localizada / Llamada"? De ser así, ¿cómo se reflejan en el cuadrante (ej. código `DISP`)?
+### Punto H: Flujo de Aprobación de Guardias Médicas Especiales (`DISP`) - IMPLEMENTADO (CON MEJORAS 2-4 EN REVISIÓN)
+- **Escenario**: En servicios médicos críticos y de apoyo, un profesional o técnico realiza disponibilidad no presencial (llamada / retén domiciliario `DISP`).
+- **Estado actual implementado**:
+  - Turno oficial `DISP` (`0h` presenciales base) habilitado en catálogo y paleta.
+  - Reporte de llamados efectivos por el colaborador con validación uninivel del Coordinador, liquidación de recargos normales + suma de hora ordinaria al Banco de Horas (**Opción A — `RN-BH01`**).
+  - **Mejora 1 (Implementada)**: Soporte para **múltiples llamados no solapados en un mismo día `DISP`** (ej. llamado en la mañana y segundo llamado en la noche de la misma guardia de disponibilidad).
+- **Pendientes de revisión futura sobre Disponibilidades (`DISP`)**:
+  - **Mejora 2 (En revisión)**: Soportar *"Turno Presencial Diurno (`M8`/`ADM`) + Disponibilidad Nocturna (`+DISP`) en la misma celda del día"* mediante un indicador secundario en el Inspector de Celda.
+  - **Mejora 3 (En revisión)**: Columna de conteo de turnos `DISP` programados en el mes (`Turnos_DISP`) en Pre-Nómina y CSV (en caso de que se reconozca bonificación pasiva por disponibilidad o se audite equidad de retenes).
+  - **Mejora 4 (En revisión)**: Alerta visual de fatiga cuando un llamado `DISP` de madrugada reduce a menos de 12h el descanso previo al turno presencial de la mañana siguiente.

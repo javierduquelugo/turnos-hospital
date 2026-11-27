@@ -77,3 +77,30 @@ En la pestaña **"Resumen_Nomina"** del archivo Excel que Rafa Turnos entrega a 
 | 1012345678 | Camilo López | Urgencias | ... | 96 | 48 | 24 | **-6.0** | **+10.0** | **+4.0** |
 
 Esto permite a Gestión Humana auditar la evolución histórica del banco de horas y alimentar de forma transparente los sistemas de personal sin confusiones ni reclamos de fin de mes.
+
+---
+
+## 6. Liquidación de Tiempo Adicional Aprobado (Prolongación de Turno y Llamados `DISP`)
+
+### A. Política Activa en Operación: Opción A (Pura de Banco de Horas + Recargos Normales — `RN-BH01`)
+* **Sin campo separado de Hora Extra (`HED`/`HEN` = 0):** En coherencia con la Regla de Oro `RN-BH01`, cualquier tiempo adicional aprobado por el Coordinador (prolongación de turno o llamado efectivo durante una disponibilidad médica `DISP`) se integra bajo el mismo principio del Banco de Horas:
+  1. **En la Nómina del mes corriente:** se liquidan únicamente los **recargos normales** causados por la franja horaria real del reporte (`HOD`, `HON 35%`, `HDFD`, `HDFN`), sumándose directamente a los totales del periodo.
+  2. **En el Banco de Horas:** la **hora ordinaria base** trabajada se suma a `horasTrabajadas`, incrementando el `nuevoSaldoBanco` para su futura compensación en tiempo libre mediante turnos `COMP` (o nivelando el déficit si el colaborador tenía horas pendientes).
+* **Ventaja operativa:** Evita el doble pago (pagar Hora Extra al 125%/175% en nómina y simultáneamente acumular la misma hora a favor en el Banco de Horas).
+
+---
+
+### B. Anexo Técnico de Referencia: Modelo B (Separación de Campo de Hora Extra por Exceso de Meta Mensual)
+*(Documentado como referencia arquitectónica en caso de que en el futuro se desee reformular o habilitar para un régimen contractual específico que sí pague concepto de Hora Extra en dinero cuando se supera la meta mensual):*
+
+1. **Cálculo del Exceso Mensual sobre Meta Neta (`horasContratadasEfectivas`):**
+   $$\text{ExcesoMes} = \max(0,\; \text{HorasTrabajadasTotales} - \text{HorasContratadasEfectivas})$$
+2. **Partición del Tiempo Adicional Aprobado (`adicTotal`):**
+   * **Porción que constituye Hora Extra (`horasAdicionalesExtras`):**
+     $$\text{horasAdicionalesExtras} = \min(\text{adicTotal},\; \text{ExcesoMes})$$
+   * **Porción que nivela déficit ordinario (`horasAdicionalesNivelacion`):**
+     $$\text{horasAdicionalesNivelacion} = \text{adicTotal} - \text{horasAdicionalesExtras}$$
+3. **Prorrateo por Franja (`ratioNivel` y `ratioExtra`):**
+   * $\text{ratioNivel} = \frac{\text{horasAdicionalesNivelacion}}{\text{adicTotal}}$ → se multiplica por `adicHod, adicHon, adicHdfd, adicHdfn` y se suma a `HOD, HON, HDFD, HDFN`.
+   * $\text{ratioExtra} = \frac{\text{horasAdicionalesExtras}}{\text{adicTotal}}$ → se multiplica por `adicHod, adicHon, adicHdfd, adicHdfn` y se reporta en columnas separadas `HED (+25%), HEN (+75%), HEFD, HEFN`.
+   * *(Nota: Si se activa este Modelo B en el futuro, las `horasAdicionalesExtras` pagadas en dinero en nómina deben restarse del movimiento que va al `nuevoSaldoBanco` para no duplicar pago en dinero + tiempo en banco).*

@@ -729,6 +729,16 @@ import { coincideBusquedaCampos, dividirTerminosBusqueda } from '../../utils/bus
                 <td><strong class="font-mono">{{ srv.codigo }}</strong></td>
                 <td>
                   <strong>{{ srv.nombre }}</strong>
+                  @let coordsTabla = obtenerCoordinadoresDelServicio(srv);
+                  @if (coordsTabla.length > 0) {
+                    <div class="srv-cargos-chips">
+                      @for (coord of coordsTabla; track coord.id) {
+                        <span class="badge-law" [title]="'Coordinador asignado a este servicio (' + coord.documento + ')'">
+                          👑 Coord: {{ coord.nombre }}
+                        </span>
+                      }
+                    </div>
+                  }
                   @if (srv.cargosPermitidos && srv.cargosPermitidos.length > 0) {
                     <div class="srv-cargos-chips">
                       @for (cp of srv.cargosPermitidos; track cp.categoriaId || cp.categoriaNombre) {
@@ -891,6 +901,35 @@ import { coincideBusquedaCampos, dividirTerminosBusqueda } from '../../utils/bus
                         </div>
                       </div>
 
+                      <div class="batch-transfer-bar">
+                        <strong>👑 Coordinadores del Servicio (TurnosCuadranteEditar):</strong>
+                        @for (coord of obtenerCoordinadoresDelServicio(srv); track coord.id) {
+                          <span class="tag-hermano">
+                            👑 {{ coord.nombre }}
+                            <button
+                              type="button"
+                              class="btn-tag-remove"
+                              [attr.aria-label]="'Quitar coordinador ' + coord.nombre"
+                              (click)="alternarCoordinadorServicio.emit({ servicioId: srv.id, empleadoId: coord.id })"
+                              title="Quitar como coordinador de este servicio">✕</button>
+                          </span>
+                        } @empty {
+                          <span class="text-muted">Por Servicio Base (puedes asignar coordinadores multi-servicio):</span>
+                        }
+                        <select
+                          class="batch-transfer-select"
+                          [attr.aria-label]="'Asignar coordinador a ' + srv.nombre"
+                          [ngModel]="''"
+                          (ngModelChange)="$event && alternarCoordinadorServicio.emit({ servicioId: srv.id, empleadoId: $event })">
+                          <option value="">+ Asignar coordinador (de cualquier servicio)...</option>
+                          @for (empCoord of empleados; track empCoord.id) {
+                            @if (!esCoordinadorDeServicio(srv, empCoord.id)) {
+                              <option [value]="empCoord.id">{{ empCoord.nombre }} ({{ empCoord.categoria }})</option>
+                            }
+                          }
+                        </select>
+                      </div>
+
                       @let selIds = obtenerSeleccionadosEnServicio(srv.id);
                       @if (selIds.length > 0) {
                         <div class="batch-transfer-bar">
@@ -995,6 +1034,14 @@ import { coincideBusquedaCampos, dividirTerminosBusqueda } from '../../utils/bus
                                           <option [value]="sDest.id">{{ sDest.codigo }} — {{ sDest.nombre }}</option>
                                         }
                                       </select>
+                                      <button
+                                        type="button"
+                                        class="btn-outline btn-plantilla-sm"
+                                        [class.btn-sm-primary]="esCoordinadorDeServicio(srv, colab.id)"
+                                        (click)="alternarCoordinadorServicio.emit({ servicioId: srv.id, empleadoId: colab.id })"
+                                        [title]="esCoordinadorDeServicio(srv, colab.id) ? 'Quitar como Coordinador de ' + srv.nombre : 'Designar como Coordinador de ' + srv.nombre + ' (TurnosCuadranteEditar)'">
+                                        {{ esCoordinadorDeServicio(srv, colab.id) ? '👑 Coord.' : '+ Coord.' }}
+                                      </button>
                                     </div>
                                   </div>
                                 }
@@ -1074,6 +1121,7 @@ export class ConfiguracionServiciosComponent {
   @Output() eliminarServicioAutonomo = new EventEmitter<ServicioHospitalario>();
   @Output() adscribirEmpleadoAServicio = new EventEmitter<{ empleadoId: string; servicioBaseId: string }>();
   @Output() adscribirLoteAServicio = new EventEmitter<{ empleadoIds: string[]; servicioBaseId: string }>();
+  @Output() alternarCoordinadorServicio = new EventEmitter<{ servicioId: string; empleadoId: string }>();
 
   serviciosExpandidos = signal<Set<string>>(new Set<string>());
   filtroMacroproceso = signal<string>('TODOS');
@@ -1420,5 +1468,18 @@ export class ConfiguracionServiciosComponent {
     return codigos
       .map((c) => this.catalogoTurnosMap[c.toUpperCase()])
       .filter((t): t is TipoTurnoConfig => Boolean(t && t.horasOrdinarias > 0 && !t.esAusencia));
+  }
+
+  esCoordinadorDeServicio(srv: ServicioHospitalario, empleadoId: string): boolean {
+    const ids = Array.isArray(srv?.coordinadoresIds) ? srv.coordinadoresIds : [];
+    if (ids.includes(empleadoId)) return true;
+    const emp = this.empleados.find((e) => e.id === empleadoId);
+    return Boolean(emp && ids.includes(emp.documento));
+  }
+
+  obtenerCoordinadoresDelServicio(srv: ServicioHospitalario): EmpleadoHospital[] {
+    const ids = new Set(Array.isArray(srv?.coordinadoresIds) ? srv.coordinadoresIds : []);
+    if (ids.size === 0) return [];
+    return (this.empleados || []).filter((e) => ids.has(e.id) || ids.has(e.documento));
   }
 }

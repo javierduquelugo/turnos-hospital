@@ -845,6 +845,8 @@ export class LiquidacionService implements OnModuleInit {
       let adicHdfd = 0;
       let adicHdfn = 0;
       let adicTotal = 0;
+      const fechasDescansoSet = new Set<string>(liq.fechasDescansoLaboradas);
+      const fechasDomingosSet = new Set<string>(liq.fechasDomingosLaborados);
 
       for (const sol of listaAdicEmp) {
         const hEff = Number(sol.horasAprobadas ?? sol.horasCalculadas) || 0;
@@ -857,6 +859,12 @@ export class LiquidacionService implements OnModuleInit {
         const fechaSolIso = sol.fecha
           ? new Date(sol.fecha).toISOString().substring(0, 10)
           : `${sol.anio}-${String(sol.mes).padStart(2, '0')}-${String(sol.dia).padStart(2, '0')}`;
+        if (pred(fechaSolIso) || (Number(sol.hdfd) || 0) + (Number(sol.hdfn) || 0) > 0) {
+          fechasDescansoSet.add(fechaSolIso);
+        }
+        if (esDomingo(fechaSolIso)) {
+          fechasDomingosSet.add(fechaSolIso);
+        }
         itemsVentanaSemanal.push({
           fechaIso: fechaSolIso,
           codigo: sol.tipo || 'EXTRA',
@@ -868,6 +876,11 @@ export class LiquidacionService implements OnModuleInit {
           },
         });
       }
+
+      const fechasDescansoFinal = Array.from(fechasDescansoSet).sort();
+      const fechasDomingosFinal = Array.from(fechasDomingosSet).sort();
+      const domingosLaboradosFinal = fechasDomingosFinal.length;
+      const diasDescansoLaboradosFinal = fechasDescansoFinal.length;
 
       const semanalRaw = evaluarJornadaSemanalPeriodo(itemsVentanaSemanal, reglas);
       const semanasDelMes = semanalRaw.semanas.filter((s) => s.semanaFinIso >= primerDiaIso);
@@ -885,7 +898,7 @@ export class LiquidacionService implements OnModuleInit {
       };
 
       const diasCompensatoriosCausados = calcularDiasCompensatoriosDominicales(
-        liq.domingosLaborados
+        domingosLaboradosFinal
       );
       const causaCompensatorioDominical = diasCompensatoriosCausados > 0;
       const diasHabilesProrrateados = contarDiasHabilesProrrateados(itemsMes, predFest);
@@ -897,24 +910,30 @@ export class LiquidacionService implements OnModuleInit {
       );
       const normativaColaborador = resumenNormativoPeriodo(anio, mes, reglas);
 
-      // Modelo B (Meta Mensual / Bolsa de Horas):
-      // El tiempo adicional primero nivela déficit frente a meta.horasContratadasEfectivas;
-      // todo lo que supere la meta mensual se clasifica como Horas Extras con recargos CST.
+      // OPCIÓN A ACTIVA (Política Pura de Banco de Horas — RN-BH01):
+      // Todo tiempo adicional aprobado (prolongaciones y llamados DISP) suma su hora ordinaria base
+      // al total de horasTrabajadas (alimentando el Banco de Horas para futuros descansos COMP)
+      // y en la nómina del periodo solo se liquidan sus recargos normales según la franja (HOD, HON, HDFD, HDFN).
+      // No se bifurca hacia columnas de Horas Extras (hed/hen/hefd/hefn = 0) para evitar doble pago
+      // (dinero extra en nómina + tiempo acumulado en el Banco de Horas).
+      //
+      // [DOCUMENTACIÓN MODELO B — Referencia por si se reformula en el futuro]:
+      // Si se requiere separar en campo de Hora Extra el excedente sobre la meta mensual:
+      //   const excesoMes = Math.max(0, r2(horasTrabajadasTotales - meta.horasContratadasEfectivas));
+      //   const horasAdicionalesExtras = Math.min(adicTotal, excesoMes);
+      //   const horasAdicionalesNivelacion = r2(adicTotal - horasAdicionalesExtras);
+      //   const ratioNivel = adicTotal > 0 ? horasAdicionalesNivelacion / adicTotal : 0;
+      //   const ratioExtra = adicTotal > 0 ? horasAdicionalesExtras / adicTotal : 0;
+      //   (multiplicando adicHod/adicHon/adicHdfd/adicHdfn por ratioNivel y ratioExtra respectivamente).
       const horasTrabajadasTotales = r2(liq.total + adicTotal);
-      const excesoMes = Math.max(0, r2(horasTrabajadasTotales - meta.horasContratadasEfectivas));
-      const horasAdicionalesExtras = Math.min(adicTotal, excesoMes);
-      const horasAdicionalesNivelacion = r2(adicTotal - horasAdicionalesExtras);
-      const ratioNivel = adicTotal > 0 ? horasAdicionalesNivelacion / adicTotal : 0;
-      const ratioExtra = adicTotal > 0 ? horasAdicionalesExtras / adicTotal : 0;
-
-      const hodFinal = r2(liq.hod + adicHod * ratioNivel);
-      const honFinal = r2(liq.hon + adicHon * ratioNivel);
-      const hdfdFinal = r2(liq.hdfd + adicHdfd * ratioNivel);
-      const hdfnFinal = r2(liq.hdfn + adicHdfn * ratioNivel);
-      const hedFinal = r2(adicHod * ratioExtra);
-      const henFinal = r2(adicHon * ratioExtra);
-      const hefdFinal = r2(adicHdfd * ratioExtra);
-      const hefnFinal = r2(adicHdfn * ratioExtra);
+      const hodFinal = r2(liq.hod + adicHod);
+      const honFinal = r2(liq.hon + adicHon);
+      const hdfdFinal = r2(liq.hdfd + adicHdfd);
+      const hdfnFinal = r2(liq.hdfn + adicHdfn);
+      const hedFinal = 0;
+      const henFinal = 0;
+      const hefdFinal = 0;
+      const hefnFinal = 0;
 
       return {
         empleadoId: emp.id,
@@ -950,10 +969,10 @@ export class LiquidacionService implements OnModuleInit {
         horasAdicionalesAprobadas: adicTotal,
         horasExtrasTotales: r2(hedFinal + henFinal + hefdFinal + hefnFinal),
         horasTrabajadas: horasTrabajadasTotales,
-        diasDescansoLaborados: liq.diasDescansoLaborados,
-        fechasDescansoLaboradas: liq.fechasDescansoLaboradas,
-        domingosLaborados: liq.domingosLaborados,
-        fechasDomingosLaborados: liq.fechasDomingosLaborados,
+        diasDescansoLaborados: diasDescansoLaboradosFinal,
+        fechasDescansoLaboradas: fechasDescansoFinal,
+        domingosLaborados: domingosLaboradosFinal,
+        fechasDomingosLaborados: fechasDomingosFinal,
         causaCompensatorioDominical,
         diasCompensatoriosCausados,
         turnosCompensatoriosTomados: turnosComp,

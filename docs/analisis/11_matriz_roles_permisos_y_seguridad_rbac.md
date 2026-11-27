@@ -62,4 +62,18 @@ flowchart TD
 
 ## 4. Seguridad y Protección de Datos en Salud (Habeas Data)
 - **Datos Médicos Sensibles**: Los motivos específicos o diagnósticos (CIE-10) de las incapacidades médicas **solo son visibles para Gestión Humana y Salud Ocupacional**. Para los compañeros y supervisores en el cuadrante, la celda únicamente muestra la etiqueta genérica `INC` (Incapacidad Médica), protegiendo la confidencialidad médica del colaborador.
-- **Tokens de Sesión Acotados**: La sesión transferida desde la Intranet incluye en el payload JWT el array de dependencias permitidas para el usuario (`allowedServices: [uuid1, uuid2]`), el cual es verificado por NestJS mediante decoradores (`@Roles()` y `@Services()`) y Guards de ruta.
+- **Tokens de Sesión Acotados**: La sesión transferida desde la Intranet incluye en el payload JWT el array de permisos (`permisos: string[]`) y dependencias permitidas (`serviciosCoordinados`), verificado por NestJS mediante `SsoRoleGuard`.
+
+---
+
+## 5. Modelo Oficial Basado en Permisos de la Intranet (4 Permisos Consolidados)
+
+En la integración real con la Intranet Hospitalaria, la autorización se gobierna mediante **4 permisos normalizados y Capitalizados (`PascalCase`)** dentro del payload JWT (`permisos: string[]`), manteniendo retrocompatibilidad con el campo `rol`:
+
+| # | Código de Permiso (Intranet JWT) | Alcance y Capacidades Habilitadas en Rafa Turnos |
+|:---:|---|---|
+| *(Base)* | *(Implícito para todo empleado)* | **Mi Calendario (`PORTAL_EMPLEADO`):** consultar sus propios turnos, proponer/aceptar permutas 1-a-1, reportar Tiempo Adicional / llamados `DISP` propios y suscripción iCal. |
+| **1** | `TurnosCuadranteEditar` | **Planificación y Aprobación del Servicio:** editar el Cuadro de Turnos, rotar apoyos, publicar (`BORRADOR → PUBLICADO`) y **aprobar/rechazar Permutas y Tiempo Adicional / `DISP`** en su Servicio Base, Servicios Hermanos y todos los servicios donde esté designado como **Coordinador del Servicio** (`servicios.coordinadoresIds`). |
+| **2** | `TurnosConsultaGlobal` | **Supervisión y Auditoría Global (Solo Lectura):** ver Cuadro de Turnos, Solicitudes, Reportes/CSV y Auditoría de todos los servicios del hospital sin permisos de edición ni cierre. |
+| **3** | `TurnosNominaGestionar` | **Cierre y Liquidación de Nómina Global:** incluye `TurnosConsultaGlobal` + autoridad para ejecutar el **Cierre Mensual de Nómina** (`PUBLICADO → CERRADO_NOMINA`), **Reapertura** y visualización de códigos CIE-10. |
+| **4** | `TurnosConfiguracionAdmin` | **Administración Global (`GESTIÓN`):** administrar Servicios (incluyendo designar Coordinadores de cada servicio), Personal, Catálogo de Turnos, Empresas Contratantes y Festivos. |

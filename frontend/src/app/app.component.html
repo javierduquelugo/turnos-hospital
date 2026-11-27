@@ -35,7 +35,7 @@
     [sidebarHovered]="sidebarHovered()"
     [vistaActual]="vistaActual()"
     [esColaborador]="catalogos.esColaborador()"
-    [esAdminTh]="catalogos.esAdminTh()"
+    [esAdminTh]="catalogos.puedeConfiguracionAdmin()"
     [notificacionesSolicitudesCount]="permutasAuditoria.notificacionesSolicitudesCount()"
     [propuestasRecibidasCount]="portalReportes.propuestasRecibidasPortal().length"
     [empresasPendientesCount]="catalogos.empresasPendientes().length"
@@ -80,7 +80,7 @@
       [sincronizandoNovedades]="cuadrante.sincronizandoNovedades()"
       [pilaDeshacer]="cuadrante.pilaDeshacer()"
       [pilaRehacer]="cuadrante.pilaRehacer()"
-      [esCoordinador]="catalogos.esCoordinador()"
+      [esCoordinador]="!catalogos.puedeGestionarNomina()"
       [turnoPincelActivo]="cuadrante.turnoPincelActivo()"
       [listaTurnosPaleta]="cuadrante.listaTurnosPaleta()"
       [infraccionesActivas]="cuadrante.infraccionesActivas()"
@@ -305,6 +305,7 @@
         (eliminarServicioAutonomo)="catalogos.eliminarServicioAutonomo($event)"
         (adscribirEmpleadoAServicio)="catalogos.adscribirEmpleadoAServicio($event.empleadoId, $event.servicioBaseId)"
         (adscribirLoteAServicio)="catalogos.adscribirLoteAServicio($event.empleadoIds, $event.servicioBaseId)"
+        (alternarCoordinadorServicio)="catalogos.alternarCoordinadorServicio($event.servicioId, $event.empleadoId)"
       />
     </div>
   }
@@ -422,7 +423,7 @@
     [abierto]="cuadrante.modalRotacionAbierto()"
     [servicioNombre]="catalogos.servicioActual().nombre"
     [hermanos]="catalogos.servicioActual().hermanos || []"
-    [esAdminTh]="catalogos.esAdminTh()"
+    [esAdminTh]="catalogos.puedeConfiguracionAdmin()"
     [candidatos]="cuadrante.candidatosRotacionHomologos()"
     (cerrar)="cuadrante.modalRotacionAbierto.set(false)"
     (vincular)="cuadrante.vincularRotacionAlCuadrante($event)"

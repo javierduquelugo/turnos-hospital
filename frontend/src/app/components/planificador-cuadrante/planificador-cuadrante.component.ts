@@ -751,7 +751,8 @@ import {
                         <span class="extra-mini-tag" [title]="'+' + celda?.horasAdicionalesAprobadas + 'h adicionales aprobadas por supervisión'">
                           +{{ celda?.horasAdicionalesAprobadas }}h⚡
                         </span>
-                      } @else if ((celda?.solicitudesPendientesCount || 0) > 0) {
+                      }
+                      @if ((celda?.solicitudesPendientesCount || 0) > 0) {
                         <span class="extra-pend-mini-tag" title="Reporte de tiempo adicional pendiente de revisión">⏳</span>
                       }
                       @if (celda?.nota) {
@@ -768,8 +769,8 @@ import {
                   <strong>{{ fila.horasTrabajadas }}</strong><span class="sub-contract">/{{ fila.horasContratadasEfectivas ?? fila.empleado.horasContratoMes }}</span>
                 </div>
                 @if ((fila.horasAdicionalesAprobadas || 0) > 0) {
-                  <div class="multi-srv-hours-badge" [title]="(fila.horasExtrasTotales || 0) > 0 ? 'Incluye ' + fila.horasExtrasTotales + 'h extras CST por exceso sobre meta mensual' : 'Incluye +' + fila.horasAdicionalesAprobadas + 'h adicionales que nivelan meta mensual'">
-                    +{{ fila.horasAdicionalesAprobadas }}h ⚡{{ (fila.horasExtrasTotales || 0) > 0 ? ' (' + fila.horasExtrasTotales + 'h ext)' : '' }}
+                  <div class="multi-srv-hours-badge" [title]="'Incluye +' + fila.horasAdicionalesAprobadas + 'h adicionales aprobadas (recargos integrados en HOD/HON/HDFD/HDFN y hora ordinaria en Banco de Horas)'">
+                    +{{ fila.horasAdicionalesAprobadas }}h ⚡
                   </div>
                 }
                 @if (fila.horasOtrosServicios > 0) {

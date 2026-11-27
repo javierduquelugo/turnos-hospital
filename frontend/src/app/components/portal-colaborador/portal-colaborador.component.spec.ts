@@ -280,9 +280,8 @@ describe('PortalColaboradorComponent (Selector de Vista y Modo Responsive)', () 
     expect(component.modalTiempoAdicionalAbierto()).toBeFalse();
   });
 
-  it('aplica Modelo B (Meta Mensual) en calcularMetricasMesColaborador: nivela déficit primero y liquida el excedente como Hora Extra', () => {
-    // 1. Caso Déficit: solo 1 turno M8 (8h) + 3.5h llamado nocturno DISP = 11.5h (< meta mensual 168h)
-    const celdasDeficit = {
+  it('aplica Opción A (RN-BH01) en calcularMetricasMesColaborador: liquida recargos normales y suma hora ordinaria al Banco de Horas sin campo de Hora Extra', () => {
+    const celdasConDisp = {
       1: { codigo: 'M8' as const },
       2: {
         codigo: 'DISP' as const,
@@ -304,20 +303,79 @@ describe('PortalColaboradorComponent (Selector de Vista y Modo Responsive)', () 
         ],
       },
     };
-    const metDeficit = calcularMetricasMesColaborador(
+    const met = calcularMetricasMesColaborador(
       mockEmpleado,
-      celdasDeficit,
+      celdasConDisp,
       mockDias,
       component.catalogoTurnosMap,
       {},
       2026,
       11
     );
-    expect(metDeficit.horasTrabajadas).toBe(11.5);
-    expect(metDeficit.horasAdicionalesAprobadas).toBe(3.5);
-    // Como 11.5h <= meta (168h), las 3.5h nivelan jornada ordinaria nocturna (hon = 3.5) y 0h extras
-    expect(metDeficit.hon).toBe(3.5);
-    expect(metDeficit.horasExtrasTotales).toBe(0);
-    expect(metDeficit.hen).toBe(0);
+    expect(met.horasTrabajadas).toBe(11.5);
+    expect(met.horasAdicionalesAprobadas).toBe(3.5);
+    expect(met.hon).toBe(3.5);
+    expect(met.horasExtrasTotales).toBe(0);
+    expect(met.hen).toBe(0);
+  });
+
+  it('permite múltiples llamados DISP en el mismo día si sus franjas no se solapan y bloquea franjas solapadas (Mejora 1)', () => {
+    const emitSpy = spyOn(component.enviarSolicitudTiempoAdicional, 'emit');
+    // Simular que el día 2 ya tiene un primer llamado aprobado de 02:00 a 05:00
+    component.portal = {
+      ...mockPortal,
+      celdas: {
+        ...mockPortal.celdas,
+        2: {
+          codigo: 'DISP',
+          horasAdicionalesAprobadas: 3,
+          tramosAdicionales: [
+            {
+              id: 'tr-prev-1',
+              tipo: 'DISPONIBILIDAD_LLAMADO',
+              horaInicio: '02:00',
+              horaFin: '05:00',
+              horasAprobadas: 3,
+              hod: 0,
+              hon: 3,
+              hdfd: 0,
+              hdfn: 0,
+              motivoCategoria: 'CIRUGIA_URGENCIA',
+              motivoDetalle: 'Llamado madrugada',
+            },
+          ],
+        },
+      },
+    };
+
+    const fakeEvent = new MouseEvent('click');
+    component.abrirModalTiempoAdicional(fakeEvent, 2);
+    expect(component.modalTiempoAdicionalAbierto()).toBeTrue();
+    // Como 02:00–05:00 ya está ocupado en el día 2, sugiere automáticamente la siguiente franja libre (09:00–12:00)
+    expect(component.horaInicioExtra()).toBe('09:00');
+    expect(component.horaFinExtra()).toBe('12:00');
+
+    // Si el colaborador intenta poner una franja que se cruza con 02:00–05:00 (ej. 03:30–06:00), bloquea el envío
+    component.horaInicioExtra.set('03:30');
+    component.horaFinExtra.set('06:00');
+    component.motivoDetalleExtra.set('Segundo llamado solapado');
+    component.confirmarEnvioTiempoAdicional();
+    expect(emitSpy).not.toHaveBeenCalled();
+    expect(component.errorValidacionModalExtra()).toContain('se solapa con otro reporte');
+
+    // Si ajusta la franja a una no solapada (ej. 20:00–22:30 en la noche del mismo día), permite el envío
+    component.horaInicioExtra.set('20:00');
+    component.horaFinExtra.set('22:30');
+    component.motivoDetalleExtra.set('Segundo llamado nocturno en el mismo turno DISP');
+    component.confirmarEnvioTiempoAdicional();
+    expect(emitSpy).toHaveBeenCalledWith(
+      jasmine.objectContaining({
+        dia: 2,
+        turnoBase: 'DISP',
+        tipo: 'DISPONIBILIDAD_LLAMADO',
+        horaInicio: '20:00',
+        horaFin: '22:30',
+      })
+    );
   });
 });

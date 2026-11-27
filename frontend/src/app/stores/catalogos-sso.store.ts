@@ -11,6 +11,7 @@ import {
   MetaTurnoServicio,
   ModalidadDiasServicio,
   NOMBRES_MESES,
+  PermisoTurnosSso,
   PlantillaEmpresaOption,
   ReglaCargoServicio,
   RolUsuarioSso,
@@ -94,7 +95,57 @@ export class CatalogosSsoStore {
   readonly intranetReturnUrl = signal<string>(this.leerUrlIntranetGuardada());
 
   readonly rolActual = computed<RolUsuarioSso>(() => this.sesionActual()?.rol || 'COLABORADOR');
-  readonly esColaborador = computed<boolean>(() => this.rolActual() === 'COLABORADOR');
+
+  readonly permisosActuales = computed<PermisoTurnosSso[]>(() => {
+    const sesion = this.sesionActual();
+    const raw = sesion?.permisos;
+    const set = new Set<PermisoTurnosSso>();
+    if (Array.isArray(raw)) {
+      for (const p of raw) {
+        if (
+          p === 'TurnosCuadranteEditar' ||
+          p === 'TurnosConsultaGlobal' ||
+          p === 'TurnosNominaGestionar' ||
+          p === 'TurnosConfiguracionAdmin'
+        ) {
+          set.add(p);
+        }
+      }
+    } else if (sesion?.rol === 'ADMIN_TH') {
+      set.add('TurnosConfiguracionAdmin');
+      set.add('TurnosNominaGestionar');
+      set.add('TurnosCuadranteEditar');
+      set.add('TurnosConsultaGlobal');
+    } else if (sesion?.rol === 'COORDINADOR') {
+      set.add('TurnosCuadranteEditar');
+    }
+    if (set.has('TurnosConfiguracionAdmin')) {
+      set.add('TurnosNominaGestionar');
+      set.add('TurnosCuadranteEditar');
+      set.add('TurnosConsultaGlobal');
+    } else if (set.has('TurnosNominaGestionar')) {
+      set.add('TurnosConsultaGlobal');
+    }
+    return Array.from(set);
+  });
+
+  readonly puedeEditarCuadrante = computed<boolean>(() =>
+    this.permisosActuales().includes('TurnosCuadranteEditar')
+  );
+  readonly puedeConsultaGlobal = computed<boolean>(() =>
+    this.permisosActuales().includes('TurnosConsultaGlobal') ||
+    this.permisosActuales().includes('TurnosNominaGestionar') ||
+    this.permisosActuales().includes('TurnosConfiguracionAdmin')
+  );
+  readonly puedeGestionarNomina = computed<boolean>(() =>
+    this.permisosActuales().includes('TurnosNominaGestionar') ||
+    this.permisosActuales().includes('TurnosConfiguracionAdmin')
+  );
+  readonly puedeConfiguracionAdmin = computed<boolean>(() =>
+    this.permisosActuales().includes('TurnosConfiguracionAdmin')
+  );
+
+  readonly esColaborador = computed<boolean>(() => this.rolActual() === 'COLABORADOR' && this.permisosActuales().length === 0);
   readonly esCoordinador = computed<boolean>(() => this.rolActual() === 'COORDINADOR');
   readonly esAdminTh = computed<boolean>(() => this.rolActual() === 'ADMIN_TH');
 
@@ -127,14 +178,23 @@ export class CatalogosSsoStore {
     this.listaTurnosCatalogo().filter((t) => t.activo !== false)
   );
 
-  // Servicios autorizados según el rol de la sesión SSO activa
+  // Servicios autorizados según los permisos de la sesión SSO activa y coordinadores asignados en Rafa Turnos
   readonly serviciosVisibles = computed<ServicioHospitalario[]>(() => {
     const todos = this.servicios();
     const sesion = this.sesionActual();
-    if (!sesion || sesion.rol === 'ADMIN_TH') {
+    if (!sesion || this.puedeConsultaGlobal() || sesion.rol === 'ADMIN_TH') {
       return todos;
     }
     const permitidos = new Set(sesion.serviciosPermitidosIds || [sesion.servicioBaseId]);
+    for (const s of todos) {
+      if (
+        Array.isArray(s.coordinadoresIds) &&
+        (s.coordinadoresIds.includes(sesion.empleadoId) ||
+          s.coordinadoresIds.includes(sesion.documento))
+      ) {
+        permitidos.add(s.id);
+      }
+    }
     const filtrados = todos.filter((s) => permitidos.has(s.id));
     return filtrados.length > 0 ? filtrados : todos;
   });
@@ -1275,6 +1335,51 @@ export class CatalogosSsoStore {
         inputCod.focus({ preventScroll: true });
       }
     }, 30);
+  }
+
+  alternarCoordinadorServicio(servicioId: string, empleadoId: string): void {
+    if (!servicioId || !empleadoId) return;
+    const srv = this.servicios().find((s) => s.id === servicioId);
+    if (!srv) return;
+
+    const emp = this.empleados().find((e) => e.id === empleadoId || e.documento === empleadoId);
+    const actuales = Array.isArray(srv.coordinadoresIds) ? [...srv.coordinadoresIds] : [];
+    const yaEs = actuales.includes(empleadoId) || (emp ? actuales.includes(emp.documento) : false);
+    const nuevos = yaEs
+      ? actuales.filter((id) => id !== empleadoId && (!emp || id !== emp.documento))
+      : [...actuales, empleadoId];
+
+    // Optimistic update
+    this.servicios.update((lista) =>
+      lista.map((s) => (s.id === servicioId ? { ...s, coordinadoresIds: nuevos } : s))
+    );
+
+    this.api
+      .actualizarCoordinadoresServicio(servicioId, { coordinadoresIds: nuevos })
+      .subscribe({
+        next: (res) => {
+          this.servicios.update((lista) =>
+            lista.map((s) =>
+              s.id === servicioId
+                ? { ...s, coordinadoresIds: res.coordinadoresIds || nuevos }
+                : s
+            )
+          );
+          const nomEmp = emp?.nombre || empleadoId;
+          this.notificacion.mostrar(
+            yaEs
+              ? `ℹ️ ${nomEmp} fue retirado como Coordinador de ${srv.nombre}.`
+              : `👑 ${nomEmp} fue asignado como Coordinador responsable de ${srv.nombre}.`
+          );
+        },
+        error: (err) => {
+          this.servicios.update((lista) =>
+            lista.map((s) => (s.id === servicioId ? { ...s, coordinadoresIds: actuales } : s))
+          );
+          const msg = err?.error?.message || 'Error al actualizar coordinadores del servicio.';
+          this.notificacion.mostrar(`⛔ ${msg}`);
+        },
+      });
   }
 
   cancelarEdicionServicio(): void {

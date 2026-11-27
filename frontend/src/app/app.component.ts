@@ -424,12 +424,16 @@ export class AppComponent implements OnInit {
 
   irAConfigurarServiciosApoyo(): void {
     this.cuadrante.modalRotacionAbierto.set(false);
+    if (!this.catalogos.puedeConfiguracionAdmin()) {
+      this.notificacion.mostrar('ℹ️ La gestión de servicios de apoyo requiere el permiso TurnosConfiguracionAdmin.');
+      return;
+    }
     this.vistaActual.set('GESTION_SERVICIOS');
   }
 
   irAConfigurarEmpresas(): void {
-    if (!this.catalogos.esAdminTh()) {
-      this.notificacion.mostrar('ℹ️ La gestión de empresas contratantes está reservada a Talento Humano / Admin.');
+    if (!this.catalogos.puedeConfiguracionAdmin()) {
+      this.notificacion.mostrar('ℹ️ La gestión de empresas contratantes requiere el permiso TurnosConfiguracionAdmin.');
       return;
     }
     this.vistaActual.set('GESTION_EMPRESAS');
@@ -473,9 +477,9 @@ export class AppComponent implements OnInit {
       );
       return;
     }
-    if (this.catalogos.esCoordinador() && this.esVistaGestion(vista)) {
+    if (!this.catalogos.puedeConfiguracionAdmin() && this.esVistaGestion(vista)) {
       this.notificacion.mostrar(
-        '⛔ Acceso restringido: los módulos de Gestión están reservados para Talento Humano / Administración.'
+        '⛔ Acceso restringido: los módulos de Gestión requieren el permiso TurnosConfiguracionAdmin.'
       );
       return;
     }

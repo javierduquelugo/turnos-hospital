@@ -111,16 +111,9 @@ describe('CuadranteStore', () => {
     FestivosColombiaHelper.limpiarFestivosManualesAnio(2026);
   });
 
-  it('transiciona SIN_PLANIFICAR -> BORRADOR en orden via concatMap, autoasigna S tras G24 y revierte si falla', () => {
-    const estado$ = new Subject<any>();
+  it('transiciona SIN_PLANIFICAR -> BORRADOR directamente al guardar celda (sin PUT /cuadrantes/estado), autoasigna S tras G24 y revierte si falla', () => {
     const celda$ = new Subject<any>();
     const ordenSuscripcion: string[] = [];
-    apiSpy.actualizarEstadoCuadrante.and.returnValue(
-      defer(() => {
-        ordenSuscripcion.push('estado');
-        return estado$.asObservable();
-      })
-    );
     apiSpy.guardarCeldaCuadrante.and.returnValue(
       defer(() => {
         ordenSuscripcion.push('celda');
@@ -134,13 +127,8 @@ describe('CuadranteStore', () => {
     expect(store.estadoCuadrante()).toBe('BORRADOR');
     expect(store.asignaciones()['e1'][5].codigo).toBe('G24');
     expect(store.asignaciones()['e1'][6].codigo).toBe('S');
-    expect(apiSpy.actualizarEstadoCuadrante).toHaveBeenCalledTimes(1);
-    // concatMap: aun no se ha suscrito a guardarCeldaCuadrante hasta que estado$ complete
-    expect(ordenSuscripcion).toEqual(['estado']);
-
-    estado$.next({ ok: true });
-    estado$.complete();
-    expect(ordenSuscripcion).toEqual(['estado', 'celda', 'celda']);
+    expect(apiSpy.actualizarEstadoCuadrante).not.toHaveBeenCalled();
+    expect(ordenSuscripcion).toEqual(['celda', 'celda']);
 
     // Si falla el guardado de celda se revierten asignaciones, estado y pila de deshacer
     celda$.error({ error: { message: 'Error de red' } });

@@ -83,6 +83,23 @@ describe('PermutasAuditoriaStore', () => {
     expect(store.listaPermutas()[0].estado).toBe('PENDIENTE_PAR');
     expect(apiSpy.getPermutas).toHaveBeenCalledTimes(2);
 
+    // Sin permiso TurnosCuadranteEditar (COLABORADOR), rechazarPermuta/aprobarPermuta no invocan API
+    store.rechazarPermuta('perm-1');
+    expect(apiSpy.rechazarPermuta).not.toHaveBeenCalled();
+
+    // Activamos sesion con TurnosCuadranteEditar para acciones de supervision
+    catalogos.establecerSesionBasicaSso({
+      documento: '101',
+      empleadoId: 'emp-1',
+      nombre: 'Ana Coord',
+      categoria: 'Enfermero(a) Jefe',
+      rol: 'COORDINADOR',
+      permisos: ['TurnosCuadranteEditar'],
+      servicioBaseId: 'srv-urg',
+      servicioBaseNombre: 'Urgencias',
+      serviciosPermitidosIds: ['srv-urg'],
+    });
+
     apiSpy.rechazarPermuta.and.returnValue(throwError(() => ({ error: { message: 'Fallo rechazo sup' } })));
     store.rechazarPermuta('perm-1');
     expect(store.listaPermutas()[0].estado).toBe('PENDIENTE_PAR');

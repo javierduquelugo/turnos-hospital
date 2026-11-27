@@ -775,6 +775,30 @@ export class CuadrantesController {
         });
         const estadoAnterior = cuadrantePrevio?.estado || 'SIN_PLANIFICAR';
 
+        // Blindaje de transiciones de Nómina (CRIT-01 y CRIT-02):
+        // - Reabrir desde CERRADO_NOMINA o revertir desde PUBLICADO/CERRADO_NOMINA hacia BORRADOR exige TurnosNominaGestionar (o ADMIN_TH)
+        const uSso = req?.usuarioSso;
+        if (uSso) {
+          const perms: string[] = Array.isArray(uSso.permisos) ? uSso.permisos : [];
+          const tienePermisoNomina =
+            uSso.rol === 'ADMIN_TH' ||
+            perms.includes('TurnosNominaGestionar') ||
+            perms.includes('TurnosConfiguracionAdmin');
+
+          if (
+            !tienePermisoNomina &&
+            (estadoAnterior === EstadoCuadrante.CERRADO_NOMINA ||
+              estadoEnum === EstadoCuadrante.CERRADO_NOMINA ||
+              (estadoEnum === EstadoCuadrante.BORRADOR &&
+                estadoAnterior !== 'SIN_PLANIFICAR' &&
+                estadoAnterior !== EstadoCuadrante.BORRADOR))
+          ) {
+            throw new ForbiddenException(
+              'Acceso denegado: cerrar, reabrir o revertir a borrador un cuadrante publicado/cerrado requiere el permiso TurnosNominaGestionar.'
+            );
+          }
+        }
+
         const cuad = await tx.cuadrante.upsert({
           where: {
             anio_mes_servicioId: {
@@ -2423,6 +2447,10 @@ export class CuadrantesController {
             const anioDia = Number(diaIso.substring(0, 4));
             const mesDia = Number(diaIso.substring(5, 7));
             const cuad = await obtenerOCrearCuadranteMes(emp.servicioBaseId, anioDia, mesDia);
+            if (cuad.estado === EstadoCuadrante.CERRADO_NOMINA) {
+              diaIso = sumarDiasIso(diaIso, 1);
+              continue;
+            }
             const fechaUtc = new Date(`${diaIso}T00:00:00.000Z`);
 
             const asigPreviaNov =

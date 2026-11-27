@@ -172,12 +172,11 @@ export class PortalReportesStore {
 
   readonly empleadosVisiblesPortal = computed<EmpleadoHospital[]>(() => {
     const todos = this.catalogos.empleados();
-    if (this.catalogos.esAdminTh()) {
+    if (this.catalogos.esAdminTh() || this.catalogos.puedeConsultaGlobal()) {
       return todos;
     }
     if (this.catalogos.esCoordinador()) {
-      const sesion = this.catalogos.sesionActual();
-      const permitidos = new Set(sesion?.serviciosPermitidosIds || [sesion?.servicioBaseId || '']);
+      const permitidos = new Set(this.catalogos.serviciosVisibles().map((s) => s.id));
       const filtrados = todos.filter((e) => permitidos.has(e.servicioBaseId));
       return filtrados.length > 0 ? filtrados : todos;
     }
@@ -464,8 +463,8 @@ export class PortalReportesStore {
     const mapaServicios = new Map(this.catalogos.servicios().map((s) => [s.id, s]));
 
     let filtrados = todosEmps;
-    if (this.catalogos.esCoordinador() && sesion) {
-      const permitidos = new Set(sesion.serviciosPermitidosIds || [sesion.servicioBaseId]);
+    if (this.catalogos.esCoordinador() && !this.catalogos.puedeConsultaGlobal() && sesion) {
+      const permitidos = new Set(this.catalogos.serviciosVisibles().map((s) => s.id));
       filtrados = filtrados.filter((e) => permitidos.has(e.servicioBaseId));
     }
     if (srvFiltro !== 'TODOS') {
@@ -834,7 +833,7 @@ export class PortalReportesStore {
     let lineas: string[] = [];
 
     if (sub === 'PRE_NOMINA') {
-      header = 'Periodo;Documento;Colaborador;Servicio;Cargo;Empresa;Regimen_Semanal_H;Dias_Habiles_Mes;Dias_Habiles_Prorrateados;Meta_Nominal_H;Prorrateo_H;Meta_Neta_H;HOD;HON;HDFD;HDFN;HED_25;HEN_75;HEFD;HEFN;Extras_CST_Total;Total_Mes;Amortizadas_COMP_H;Recargo_Nocturno_Pct;Recargo_Dominical_Festivo_Pct;Recargo_Nocturno_Dominical_Festivo_Pct;Domingos_Laborados;Dom_Fest_Laborados;Compensatorio_CST;VAC_Dias;INC_Dias;LIC_Dias;FAM_Dias;Saldo_Banco_Ant;Mov_Mes;Nuevo_Saldo_Banco';
+      header = 'Periodo;Documento;Colaborador;Servicio;Cargo;Empresa;Regimen_Semanal_H;Dias_Habiles_Mes;Dias_Habiles_Prorrateados;Meta_Nominal_H;Prorrateo_H;Meta_Neta_H;HOD;HON;HDFD;HDFN;Tiempo_Adicional_Aprobado_H;Total_Mes;Amortizadas_COMP_H;Recargo_Nocturno_Pct;Recargo_Dominical_Festivo_Pct;Recargo_Nocturno_Dominical_Festivo_Pct;Domingos_Laborados;Dom_Fest_Laborados;Compensatorio_CST;VAC_Dias;INC_Dias;LIC_Dias;FAM_Dias;Saldo_Banco_Ant;Mov_Mes;Nuevo_Saldo_Banco';
       lineas = filas.map((f) =>
         [
           periodoCsv,
@@ -853,11 +852,7 @@ export class PortalReportesStore {
           numeroCsv(f.hon),
           numeroCsv(f.hdfd),
           numeroCsv(f.hdfn),
-          numeroCsv(f.hed ?? 0),
-          numeroCsv(f.hen ?? 0),
-          numeroCsv(f.hefd ?? 0),
-          numeroCsv(f.hefn ?? 0),
-          numeroCsv(f.horasExtrasTotales ?? 0),
+          numeroCsv(f.horasAdicionalesAprobadas ?? 0),
           numeroCsv(f.horasTrabajadas),
           numeroCsv(f.horasAmortizadasComp),
           formatearPorcentaje(f.recargos.nocturno),

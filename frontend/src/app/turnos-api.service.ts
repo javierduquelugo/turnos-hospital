@@ -124,9 +124,20 @@ export class TurnosApiService {
       turnosHabilitados?: string[];
       reglasPorCargo?: any[];
       empleadosIds?: string[];
+      coordinadoresIds?: string[];
     }
   ): Observable<any> {
     return this.http.put(`${this.baseUrl}/servicios-admin/${id}`, servicio);
+  }
+
+  actualizarCoordinadoresServicio(
+    servicioId: string,
+    payload: { coordinadoresIds?: string[]; empleadoId?: string; asignado?: boolean }
+  ): Observable<{ ok: boolean; servicioId: string; coordinadoresIds: string[] }> {
+    return this.http.put<{ ok: boolean; servicioId: string; coordinadoresIds: string[] }>(
+      `${this.baseUrl}/servicios-admin/${encodeURIComponent(servicioId)}/coordinadores`,
+      payload
+    );
   }
 
   adscribirEmpleado(

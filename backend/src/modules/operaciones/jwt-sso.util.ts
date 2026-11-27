@@ -3,12 +3,135 @@ import { UnauthorizedException } from '@nestjs/common';
 
 export type RolUsuarioSso = 'ADMIN_TH' | 'COORDINADOR' | 'COLABORADOR';
 
+export type PermisoTurnosSso =
+  | 'TurnosCuadranteEditar'
+  | 'TurnosConsultaGlobal'
+  | 'TurnosNominaGestionar'
+  | 'TurnosConfiguracionAdmin';
+
+export const CATALOGO_PERMISOS_TURNOS: readonly PermisoTurnosSso[] = [
+  'TurnosCuadranteEditar',
+  'TurnosConsultaGlobal',
+  'TurnosNominaGestionar',
+  'TurnosConfiguracionAdmin',
+] as const;
+
 export interface PayloadTokenSsoIntranet {
   documento: string;
-  rol: RolUsuarioSso;
+  rol?: RolUsuarioSso;
+  permisos?: PermisoTurnosSso[] | string[];
   serviciosCoordinados?: string[];
   iat?: number;
   exp?: number;
+}
+
+/**
+ * Normaliza un código de permiso proveniente de la Intranet (con o sin puntos/guiones)
+ * al catálogo oficial Capitalizado (PascalCase) de 4 permisos de Rafa Turnos.
+ */
+export function normalizarPermisoTurnos(raw: string): PermisoTurnosSso | null {
+  const limpio = String(raw || '')
+    .trim()
+    .replace(/[._\-\s]+/g, '')
+    .toLowerCase();
+  if (!limpio) return null;
+
+  if (
+    limpio === 'turnoscuadranteeditar' ||
+    limpio === 'turnoscuadrantegestionar' ||
+    limpio === 'turnossolicitudesaprobar' ||
+    limpio === 'turnoscuadranteaprobar'
+  ) {
+    return 'TurnosCuadranteEditar';
+  }
+  if (
+    limpio === 'turnosconsultaglobal' ||
+    limpio === 'turnosconsultaver' ||
+    limpio === 'turnoscuadrantever' ||
+    limpio === 'turnosreportesver' ||
+    limpio === 'turnosauditoriaver' ||
+    limpio === 'turnosandanceglobal' ||
+    limpio === 'turnosalcanceglobal'
+  ) {
+    return 'TurnosConsultaGlobal';
+  }
+  if (
+    limpio === 'turnosnominagestionar' ||
+    limpio === 'turnosnominacerrar'
+  ) {
+    return 'TurnosNominaGestionar';
+  }
+  if (
+    limpio === 'turnosconfiguracionadmin' ||
+    limpio === 'turnosconfiguraciongestionar' ||
+    limpio === 'turnosserviciosgestionar' ||
+    limpio === 'turnoscatalogogestionar' ||
+    limpio === 'turnosempresasgestionar'
+  ) {
+    return 'TurnosConfiguracionAdmin';
+  }
+  return null;
+}
+
+/**
+ * Resuelve la lista efectiva de permisos a partir del array `permisos` del token JWT
+ * o, por retrocompatibilidad, a partir del campo `rol` tradicional.
+ */
+export function resolverPermisosSso(
+  rol?: RolUsuarioSso | string | null,
+  permisosRaw?: string[] | null
+): PermisoTurnosSso[] {
+  const set = new Set<PermisoTurnosSso>();
+
+  if (Array.isArray(permisosRaw)) {
+    for (const p of permisosRaw) {
+      const norm = normalizarPermisoTurnos(p);
+      if (norm) set.add(norm);
+    }
+  } else if (rol === 'ADMIN_TH') {
+    set.add('TurnosConfiguracionAdmin');
+    set.add('TurnosNominaGestionar');
+    set.add('TurnosCuadranteEditar');
+    set.add('TurnosConsultaGlobal');
+  } else if (rol === 'COORDINADOR') {
+    set.add('TurnosCuadranteEditar');
+  }
+
+  // Jerarquía implícita:
+  // - TurnosConfiguracionAdmin (Superadmin) incluye gestión de cuadrantes, nómina y consulta global
+  // - TurnosNominaGestionar incluye consulta global
+  if (set.has('TurnosConfiguracionAdmin')) {
+    set.add('TurnosNominaGestionar');
+    set.add('TurnosCuadranteEditar');
+    set.add('TurnosConsultaGlobal');
+  } else if (set.has('TurnosNominaGestionar')) {
+    set.add('TurnosConsultaGlobal');
+  }
+
+  return Array.from(set);
+}
+
+/**
+ * Deriva el rol equivalente de sesión a partir de los permisos efectivos
+ * para mantener retrocompatibilidad con componentes y auditorías existentes.
+ */
+export function derivarRolDesdePermisos(
+  permisos: PermisoTurnosSso[],
+  _rolExplicito?: RolUsuarioSso | string | null
+): RolUsuarioSso {
+  if (
+    permisos.includes('TurnosConfiguracionAdmin') ||
+    permisos.includes('TurnosNominaGestionar')
+  ) {
+    return 'ADMIN_TH';
+  }
+  if (
+    permisos.includes('TurnosCuadranteEditar') ||
+    permisos.includes('TurnosConsultaGlobal')
+  ) {
+    return 'COORDINADOR';
+  }
+  return 'COLABORADOR';
 }
 
 function base64UrlEncode(input: Buffer | string): string {
